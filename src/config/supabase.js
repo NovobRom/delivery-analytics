@@ -1,4 +1,0 @@
-const SUPABASE_URL = 'https://dvmartxnjpemygpqfdbq.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2bWFydHhuanBlbXlncHFmZGJxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NjQzMjAsImV4cCI6MjA4NTM0MDMyMH0.jLbsUBln1xDx8V_tuNL35TrsoYh_27HFPu4-Zfihoew';
-
-export { SUPABASE_URL, SUPABASE_ANON_KEY };

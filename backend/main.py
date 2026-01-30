@@ -6,13 +6,15 @@ from backend.routers import (
     zones_router,
     deliveries_router,
     analytics_router,
+    courier_performance_router,
+    pickup_orders_router,
 )
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Delivery Analytics API",
-    description="Backend API for delivery analytics dashboard",
-    version="1.0.0",
+    description="Backend API for delivery analytics dashboard with courier performance and pickup orders",
+    version="2.0.0",
 )
 
 # Configure CORS
@@ -29,6 +31,8 @@ app.include_router(couriers_router)
 app.include_router(zones_router)
 app.include_router(deliveries_router)
 app.include_router(analytics_router)
+app.include_router(courier_performance_router)
+app.include_router(pickup_orders_router)
 
 
 @app.get("/")
@@ -37,7 +41,7 @@ def health_check():
     return {
         "status": "online",
         "message": "Delivery Analytics API is running",
-        "version": "1.0.0",
+        "version": "2.0.0",
     }
 
 
@@ -46,11 +50,13 @@ def api_info():
     """API information endpoint."""
     return {
         "name": "Delivery Analytics API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "endpoints": {
             "couriers": "/api/couriers",
             "zones": "/api/zones",
             "deliveries": "/api/deliveries",
             "analytics": "/api/analytics",
+            "courier_performance": "/courier-performance",
+            "pickup_orders": "/pickup-orders",
         },
     }

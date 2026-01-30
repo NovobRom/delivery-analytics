@@ -27,6 +27,31 @@ from .analytics import (
     TrendPoint,
     AnalyticsSummary,
 )
+from .courier_performance import (
+    CourierPerformanceBase,
+    CourierPerformanceCreate,
+    CourierPerformanceUpdate,
+    CourierPerformanceResponse,
+    CourierPerformanceImport,
+    CourierPerformanceBulkImport,
+)
+from .pickup_order import (
+    PickupOrderBase,
+    PickupOrderCreate,
+    PickupOrderUpdate,
+    PickupOrderResponse,
+    PickupOrderImport,
+    PickupOrderBulkImport,
+)
+from .import_log import (
+    FileType,
+    ImportStatus,
+    ImportLogBase,
+    ImportLogCreate,
+    ImportLogUpdate,
+    ImportLogResponse,
+    ImportSummary,
+)
 
 __all__ = [
     # Courier
@@ -54,4 +79,26 @@ __all__ = [
     "TopCourier",
     "TrendPoint",
     "AnalyticsSummary",
+    # Courier Performance (new)
+    "CourierPerformanceBase",
+    "CourierPerformanceCreate",
+    "CourierPerformanceUpdate",
+    "CourierPerformanceResponse",
+    "CourierPerformanceImport",
+    "CourierPerformanceBulkImport",
+    # Pickup Order (new)
+    "PickupOrderBase",
+    "PickupOrderCreate",
+    "PickupOrderUpdate",
+    "PickupOrderResponse",
+    "PickupOrderImport",
+    "PickupOrderBulkImport",
+    # Import Log (new)
+    "FileType",
+    "ImportStatus",
+    "ImportLogBase",
+    "ImportLogCreate",
+    "ImportLogUpdate",
+    "ImportLogResponse",
+    "ImportSummary",
 ]
