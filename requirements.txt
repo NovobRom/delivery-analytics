@@ -1,6 +1,18 @@
-numpy==2.4.0
-pandas==2.3.3
-python-dateutil==2.9.0.post0
-pytz==2025.2
-six==1.17.0
-tzdata==2025.3
+# FastAPI and server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# HTTP client for Supabase
+httpx>=0.26.0
+
+# Data validation
+pydantic>=2.5.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Data processing (existing)
+numpy>=2.0.0
+pandas>=2.0.0
+python-dateutil>=2.8.0
+pytz>=2024.1
