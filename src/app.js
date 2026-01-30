@@ -838,12 +838,29 @@ function exportData() {
     helpers.showToast(`Експортовано ${exportData.length} записів`, 'success');
 }
 
-function clearAllData() {
+async function clearAllData() {
     if (confirm('Ви впевнені, що хочете видалити ВСІ дані? Цю дію не можна скасувати.')) {
-        localStorage.removeItem('deliveryDataV4');
-        state.allData = [];
-        state.filteredData = [];
-        state.displayData = [];
-        location.reload();
+        try {
+            if (state.useSupabase) {
+                // Wait for the clear operation to finish
+                await supabaseService.clearAllDeliveries();
+                helpers.showToast('Базу даних очищено', 'success');
+            } else {
+                localStorage.removeItem('deliveryDataV4');
+                helpers.showToast('Локальні дані очищено', 'success');
+            }
+            
+            // Reset state
+            state.allData = [];
+            state.filteredData = [];
+            state.displayData = [];
+            
+            // Reload page to refresh everything
+            setTimeout(() => location.reload(), 1000);
+            
+        } catch (error) {
+            console.error('Clear error:', error);
+            helpers.showToast('Помилка очищення: ' + error.message, 'error');
+        }
     }
 }

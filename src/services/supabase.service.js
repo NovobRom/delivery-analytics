@@ -149,7 +149,7 @@ class SupabaseService {
     }
 
     async upsertDelivery(data) {
-        // Використовуємо upsert для уникнення дублікатів
+        // Use upsert to avoid duplicates
         const response = await fetch(`${this.url}/rest/v1/deliveries`, {
             method: 'POST',
             headers: {
@@ -166,6 +166,19 @@ class SupabaseService {
         });
         if (!response.ok) throw new Error(`Upsert failed: ${response.statusText}`);
         return response.json();
+    }
+
+    /**
+     * Deletes all records from the deliveries table
+     */
+    async clearAllDeliveries() {
+        // Filter id is not null to delete all rows (PostgREST requirement for safety)
+        const response = await fetch(`${this.url}/rest/v1/deliveries?id=neq.00000000-0000-0000-0000-000000000000`, {
+            method: 'DELETE',
+            headers: this.headers
+        });
+        if (!response.ok) throw new Error(`Clear failed: ${response.statusText}`);
+        return true;
     }
 
     // =========================================
@@ -231,18 +244,18 @@ class SupabaseService {
             const record = records[i];
             
             try {
-                // Отримуємо або створюємо курʼєра
+                // Get or create courier
                 const courier = await this.getOrCreateCourier(
                     record.courierName,
                     record.vehicleNumber
                 );
 
-                // Отримуємо або створюємо зону
+                // Get or create zone
                 const zone = record.zoneName 
                     ? await this.getOrCreateZone(record.zoneName)
                     : null;
 
-                // Створюємо запис доставки
+                // Create delivery record
                 await this.upsertDelivery({
                     deliveryDate: record.deliveryDate,
                     courierId: courier.id,
@@ -260,7 +273,7 @@ class SupabaseService {
                 });
             }
 
-            // Callback для прогресу
+            // Progress callback
             if (onProgress) {
                 onProgress({
                     current: i + 1,
@@ -274,6 +287,6 @@ class SupabaseService {
     }
 }
 
-// Експортуємо singleton
+// Export singleton
 const supabaseService = new SupabaseService();
 export default supabaseService;
