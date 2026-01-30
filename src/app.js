@@ -36,7 +36,8 @@ const state = {
     
     // Operation mode
     useSupabase: false, // true = database, false = localStorage
-    
+    connectionType: 'local', // 'api', 'direct', or 'local'
+
     // Validation
     validationIssues: []
 };
@@ -61,20 +62,32 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 /**
- * Checks connection to Supabase
+ * Checks connection to backend
  */
 async function checkSupabaseConnection() {
     try {
-        // Try to fetch zones to verify connection
-        const zones = await supabaseService.getZones();
-        state.useSupabase = true;
-        console.log('✅ Supabase connected');
-        
-        // Show connection indicator
-        updateConnectionStatus(true);
+        const connectionType = await supabaseService.checkConnection();
+
+        if (connectionType === 'api') {
+            state.useSupabase = true;
+            state.connectionType = 'api';
+            console.log('✅ Connected to Backend API');
+            updateConnectionStatus(true, 'API');
+        } else if (connectionType === 'direct') {
+            state.useSupabase = true;
+            state.connectionType = 'direct';
+            console.log('✅ Connected to Supabase directly');
+            updateConnectionStatus(true, 'DB');
+        } else {
+            state.useSupabase = false;
+            state.connectionType = 'local';
+            console.log('⚠️ Using localStorage');
+            updateConnectionStatus(false);
+        }
     } catch (error) {
         state.useSupabase = false;
-        console.log('⚠️ Supabase not available, using localStorage');
+        state.connectionType = 'local';
+        console.log('⚠️ Connection failed, using localStorage');
         updateConnectionStatus(false);
     }
 }
@@ -82,13 +95,18 @@ async function checkSupabaseConnection() {
 /**
  * Updates the connection indicator
  */
-function updateConnectionStatus(connected) {
+function updateConnectionStatus(connected, type = '') {
     const indicator = document.getElementById('connectionStatus');
     if (indicator) {
-        indicator.innerHTML = connected
-            ? '<i class="fas fa-cloud"></i> Online'
-            : '<i class="fas fa-database"></i> Local';
-        indicator.className = connected ? 'status-online' : 'status-offline';
+        if (connected) {
+            indicator.innerHTML = `<i class="fas fa-cloud"></i> ${type}`;
+            indicator.className = 'status-online';
+            indicator.title = type === 'API' ? 'Connected via Backend API' : 'Connected directly to Supabase';
+        } else {
+            indicator.innerHTML = '<i class="fas fa-database"></i> Local';
+            indicator.className = 'status-offline';
+            indicator.title = 'Using local storage';
+        }
     }
 }
 
@@ -393,7 +411,230 @@ function toggleDateInputs() {
 function updateDashboard() {
     updateStats();
     updateCharts();
+    updateRanking();
+    updateInsights();
     searchTable();
+}
+
+/**
+ * Updates the insights panel with smart recommendations
+ */
+async function updateInsights() {
+    const insightsContainer = document.getElementById('insightsContainer');
+    if (!insightsContainer) return;
+
+    // Only fetch insights if connected to API
+    if (state.connectionType !== 'api') {
+        // Generate local insights from filtered data
+        const insights = generateLocalInsights();
+        renderInsights(insightsContainer, insights);
+        return;
+    }
+
+    try {
+        // Get date range from current filter
+        const dates = getCurrentDateRange();
+        const analytics = await supabaseService.getFullAnalytics(dates.start, dates.end);
+
+        if (analytics && analytics.insights) {
+            renderInsights(insightsContainer, analytics.insights);
+        }
+    } catch (error) {
+        console.error('Failed to load insights:', error);
+        // Fallback to local insights
+        const insights = generateLocalInsights();
+        renderInsights(insightsContainer, insights);
+    }
+}
+
+/**
+ * Generate insights from local data
+ */
+function generateLocalInsights() {
+    const data = state.filteredData;
+    if (!data || data.length === 0) return ['Завантажте дані для отримання інсайтів'];
+
+    const insights = [];
+    const totalLoaded = helpers.sumBy(data, '_loaded');
+    const totalDelivered = helpers.sumBy(data, '_delivered');
+    const successRate = totalLoaded > 0 ? (totalDelivered / totalLoaded * 100) : 0;
+
+    // Courier stats
+    const courierStats = {};
+    data.forEach(d => {
+        const name = d["ПІБ кур'єра"];
+        if (!courierStats[name]) courierStats[name] = { loaded: 0, delivered: 0 };
+        courierStats[name].loaded += d._loaded;
+        courierStats[name].delivered += d._delivered;
+    });
+
+    // Find best courier
+    let bestCourier = { name: '', rate: 0 };
+    let worstCourier = { name: '', rate: 100 };
+    Object.entries(courierStats).forEach(([name, stats]) => {
+        if (stats.loaded < 50) return; // Ignore couriers with few deliveries
+        const rate = stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0;
+        if (rate > bestCourier.rate) bestCourier = { name, rate };
+        if (rate < worstCourier.rate) worstCourier = { name, rate };
+    });
+
+    // Zone stats
+    const zoneStats = {};
+    data.forEach(d => {
+        const zone = d['Підрозділ відомості'] || 'Невизначено';
+        if (!zoneStats[zone]) zoneStats[zone] = { loaded: 0, delivered: 0 };
+        zoneStats[zone].loaded += d._loaded;
+        zoneStats[zone].delivered += d._delivered;
+    });
+
+    // Find worst zone
+    let worstZone = { name: '', rate: 100 };
+    Object.entries(zoneStats).forEach(([name, stats]) => {
+        const rate = stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0;
+        if (rate < worstZone.rate) worstZone = { name, rate };
+    });
+
+    // Generate insights
+    if (bestCourier.name) {
+        insights.push(`Найкращий кур'єр: ${bestCourier.name} (${bestCourier.rate.toFixed(1)}% успішності)`);
+    }
+
+    if (successRate < 95) {
+        insights.push(`Загальна успішність ${successRate.toFixed(1)}% нижче цілі (95%)`);
+    } else {
+        insights.push(`Відмінна успішність: ${successRate.toFixed(1)}%`);
+    }
+
+    if (worstZone.rate < 90) {
+        insights.push(`Увага: зона "${worstZone.name}" має низьку успішність (${worstZone.rate.toFixed(1)}%)`);
+    }
+
+    const undelivered = totalLoaded - totalDelivered;
+    if (undelivered > 0) {
+        insights.push(`Недоставлено посилок: ${helpers.formatNumber(undelivered)}`);
+    }
+
+    return insights.length > 0 ? insights : ['Всі показники в нормі'];
+}
+
+/**
+ * Render insights to container
+ */
+function renderInsights(container, insights) {
+    container.innerHTML = insights.map((insight, i) => {
+        const isWarning = insight.includes('Увага') || insight.includes('нижче');
+        const isSuccess = insight.includes('Найкращий') || insight.includes('Відмінна');
+        const icon = isWarning ? 'exclamation-triangle' : isSuccess ? 'check-circle' : 'info-circle';
+        const colorClass = isWarning ? 'warning' : isSuccess ? 'success' : 'info';
+
+        return `
+            <div class="insight-item insight-${colorClass}">
+                <i class="fas fa-${icon}"></i>
+                <span>${insight}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+/**
+ * Get current date range from filter
+ */
+function getCurrentDateRange() {
+    const type = document.getElementById('filterType')?.value || 'this_month';
+    const now = new Date();
+    let start, end;
+
+    switch (type) {
+        case 'this_month':
+            start = new Date(now.getFullYear(), now.getMonth(), 1);
+            end = now;
+            break;
+        case 'last_month':
+            start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            end = new Date(now.getFullYear(), now.getMonth(), 0);
+            break;
+        case 'this_week':
+            const week = helpers.getWeekBounds(now);
+            start = week.start;
+            end = week.end;
+            break;
+        case 'year':
+            const year = parseInt(document.getElementById('filterYear')?.value) || now.getFullYear();
+            start = new Date(year, 0, 1);
+            end = new Date(year, 11, 31);
+            break;
+        case 'custom':
+            start = new Date(document.getElementById('dateStart')?.value || now);
+            end = new Date(document.getElementById('dateEnd')?.value || now);
+            break;
+        default:
+            start = new Date(now.getFullYear(), 0, 1);
+            end = now;
+    }
+
+    return {
+        start: start.toISOString().split('T')[0],
+        end: end.toISOString().split('T')[0]
+    };
+}
+
+/**
+ * Updates the ranking table
+ */
+function updateRanking() {
+    const tbody = document.getElementById('rankingBody');
+    if (!tbody) return;
+
+    const data = state.filteredData;
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Завантажте дані для перегляду рейтингу</td></tr>';
+        return;
+    }
+
+    // Aggregate by courier
+    const courierStats = {};
+    data.forEach(d => {
+        const name = d["ПІБ кур'єра"];
+        const vehicle = d['Номер авто'] || '-';
+        if (!courierStats[name]) {
+            courierStats[name] = { vehicle, loaded: 0, delivered: 0 };
+        }
+        courierStats[name].loaded += d._loaded;
+        courierStats[name].delivered += d._delivered;
+    });
+
+    // Sort by success rate
+    const sorted = Object.entries(courierStats)
+        .map(([name, stats]) => ({
+            name,
+            vehicle: stats.vehicle,
+            loaded: stats.loaded,
+            delivered: stats.delivered,
+            rate: stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0
+        }))
+        .filter(c => c.loaded >= 50) // Minimum 50 packages
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 10);
+
+    if (sorted.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Немає даних для рейтингу</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = sorted.map((c, i) => {
+        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+        const badgeClass = helpers.getRateBadgeClass(c.rate);
+        return `
+            <tr>
+                <td><span class="rank-badge ${rankClass}">${i + 1}</span></td>
+                <td style="font-weight: 500">${c.name}</td>
+                <td>${c.vehicle}</td>
+                <td>${helpers.formatNumber(c.loaded)}</td>
+                <td>${helpers.formatNumber(c.delivered)}</td>
+                <td><span class="badge ${badgeClass}">${helpers.formatPercent(c.rate)}</span></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 /**
@@ -690,12 +931,16 @@ function switchTab(tabName) {
     state.activeTab = tabName;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    
+
     document.querySelector(`.tab[onclick*="${tabName}"]`)?.classList.add('active');
     document.getElementById(`tab-${tabName}`)?.classList.add('active');
-    
-    // If switched to comparison or ranking - specific updates can be added here
-    // updateDashboard(); // Already called by general cycle, but can be separated for optimization
+
+    // Update content based on tab
+    if (tabName === 'insights') {
+        updateInsights();
+    } else if (tabName === 'ranking') {
+        updateRanking();
+    }
 }
 
 function searchTable() {
