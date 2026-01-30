@@ -328,6 +328,119 @@ async def get_full_analytics(
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
 
 
+@router.get("/insights")
+async def get_insights(
+    start_date: Optional[date] = Query(None, description="Start date"),
+    end_date: Optional[date] = Query(None, description="End date"),
+):
+    """
+    Get smart insights and recommendations based on data analysis.
+    Returns insights in Ukrainian.
+    """
+    if not start_date or not end_date:
+        start_date, end_date = get_default_date_range()
+
+    try:
+        period_stats = await get_period_summary(start_date, end_date)
+        top_couriers = await get_top_couriers(start_date, end_date, limit=10)
+        zone_stats = await get_zone_stats(start_date, end_date)
+
+        insights = []
+
+        # Best courier insight
+        if top_couriers:
+            best = top_couriers[0]
+            insights.append({
+                "type": "success",
+                "message": f"Найкращий кур'єр: {best.full_name} ({best.success_rate}% успішності)",
+                "icon": "trophy"
+            })
+
+            # Worst courier (if more than 3 couriers)
+            if len(top_couriers) >= 3:
+                worst = top_couriers[-1]
+                if worst.success_rate < 90:
+                    insights.append({
+                        "type": "warning",
+                        "message": f"Потребує уваги: {worst.full_name} ({worst.success_rate}% успішності)",
+                        "icon": "user-clock"
+                    })
+
+        # Overall success rate
+        if period_stats.success_rate >= 95:
+            insights.append({
+                "type": "success",
+                "message": f"Відмінна загальна успішність: {period_stats.success_rate}%",
+                "icon": "check-circle"
+            })
+        elif period_stats.success_rate >= 90:
+            insights.append({
+                "type": "info",
+                "message": f"Успішність {period_stats.success_rate}% близька до цілі (95%)",
+                "icon": "chart-line"
+            })
+        else:
+            insights.append({
+                "type": "warning",
+                "message": f"Успішність {period_stats.success_rate}% значно нижче цілі (95%)",
+                "icon": "exclamation-triangle"
+            })
+
+        # Zone analysis
+        if zone_stats:
+            worst_zone = min(zone_stats, key=lambda z: z.success_rate)
+            best_zone = max(zone_stats, key=lambda z: z.success_rate)
+
+            if worst_zone.success_rate < 85:
+                insights.append({
+                    "type": "warning",
+                    "message": f"Критична зона: {worst_zone.name} ({worst_zone.success_rate}%)",
+                    "icon": "map-marker-alt"
+                })
+
+            if best_zone.success_rate > 98:
+                insights.append({
+                    "type": "success",
+                    "message": f"Найкраща зона: {best_zone.name} ({best_zone.success_rate}%)",
+                    "icon": "star"
+                })
+
+        # Undelivered packages
+        if period_stats.undelivered > 100:
+            insights.append({
+                "type": "info",
+                "message": f"Недоставлено посилок: {period_stats.undelivered}",
+                "icon": "box"
+            })
+
+        # Active couriers
+        if period_stats.active_couriers < 5:
+            insights.append({
+                "type": "info",
+                "message": f"Активних кур'єрів: {period_stats.active_couriers}. Можливо потрібно більше.",
+                "icon": "users"
+            })
+
+        # If no special insights, add a positive one
+        if len(insights) < 2:
+            insights.append({
+                "type": "success",
+                "message": "Всі показники в нормі!",
+                "icon": "thumbs-up"
+            })
+
+        return {
+            "insights": insights,
+            "summary": {
+                "total_loaded": period_stats.total_loaded,
+                "success_rate": period_stats.success_rate,
+                "active_couriers": period_stats.active_couriers,
+            }
+        }
+    except HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+
+
 @router.get("/compare")
 async def compare_periods(
     period1_start: date = Query(..., description="First period start"),

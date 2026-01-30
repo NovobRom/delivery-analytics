@@ -541,7 +541,24 @@ tr:hover { background: #f9fafb; }
 }
 
 .insight-item i {
-    font-size: 1.5rem;
+    font-size: 1.2rem;
+    width: 24px;
+    text-align: center;
+}
+
+.insight-success {
+    background: rgba(16, 185, 129, 0.2);
+    border-left: 3px solid #10b981;
+}
+
+.insight-warning {
+    background: rgba(245, 158, 11, 0.2);
+    border-left: 3px solid #f59e0b;
+}
+
+.insight-info {
+    background: rgba(255, 255, 255, 0.15);
+    border-left: 3px solid rgba(255, 255, 255, 0.5);
 }
 
 /* =============================================
