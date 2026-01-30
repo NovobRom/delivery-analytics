@@ -36,7 +36,8 @@ const state = {
     
     // Operation mode
     useSupabase: false, // true = database, false = localStorage
-    
+    connectionType: 'local', // 'api', 'direct', or 'local'
+
     // Validation
     validationIssues: []
 };
@@ -410,6 +411,7 @@ function toggleDateInputs() {
 function updateDashboard() {
     updateStats();
     updateCharts();
+    updateRanking();
     updateInsights();
     searchTable();
 }
@@ -574,6 +576,65 @@ function getCurrentDateRange() {
         start: start.toISOString().split('T')[0],
         end: end.toISOString().split('T')[0]
     };
+}
+
+/**
+ * Updates the ranking table
+ */
+function updateRanking() {
+    const tbody = document.getElementById('rankingBody');
+    if (!tbody) return;
+
+    const data = state.filteredData;
+    if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Завантажте дані для перегляду рейтингу</td></tr>';
+        return;
+    }
+
+    // Aggregate by courier
+    const courierStats = {};
+    data.forEach(d => {
+        const name = d["ПІБ кур'єра"];
+        const vehicle = d['Номер авто'] || '-';
+        if (!courierStats[name]) {
+            courierStats[name] = { vehicle, loaded: 0, delivered: 0 };
+        }
+        courierStats[name].loaded += d._loaded;
+        courierStats[name].delivered += d._delivered;
+    });
+
+    // Sort by success rate
+    const sorted = Object.entries(courierStats)
+        .map(([name, stats]) => ({
+            name,
+            vehicle: stats.vehicle,
+            loaded: stats.loaded,
+            delivered: stats.delivered,
+            rate: stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0
+        }))
+        .filter(c => c.loaded >= 50) // Minimum 50 packages
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 10);
+
+    if (sorted.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Немає даних для рейтингу</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = sorted.map((c, i) => {
+        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+        const badgeClass = helpers.getRateBadgeClass(c.rate);
+        return `
+            <tr>
+                <td><span class="rank-badge ${rankClass}">${i + 1}</span></td>
+                <td style="font-weight: 500">${c.name}</td>
+                <td>${c.vehicle}</td>
+                <td>${helpers.formatNumber(c.loaded)}</td>
+                <td>${helpers.formatNumber(c.delivered)}</td>
+                <td><span class="badge ${badgeClass}">${helpers.formatPercent(c.rate)}</span></td>
+            </tr>
+        `;
+    }).join('');
 }
 
 /**
@@ -870,12 +931,16 @@ function switchTab(tabName) {
     state.activeTab = tabName;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    
+
     document.querySelector(`.tab[onclick*="${tabName}"]`)?.classList.add('active');
     document.getElementById(`tab-${tabName}`)?.classList.add('active');
-    
-    // If switched to comparison or ranking - specific updates can be added here
-    // updateDashboard(); // Already called by general cycle, but can be separated for optimization
+
+    // Update content based on tab
+    if (tabName === 'insights') {
+        updateInsights();
+    } else if (tabName === 'ranking') {
+        updateRanking();
+    }
 }
 
 function searchTable() {
