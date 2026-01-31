@@ -1,175 +1,128 @@
 // =============================================
-// Delivery Analytics Pro - Main Application
+// Delivery Analytics Pro v2.0
+// Main Application Entry Point
 // =============================================
 
-import supabaseService from './services/supabase.service.js';
+import dataService from './services/supabase.service.js';
 import excelParser from './services/excel-parser.service.js';
+import store from './modules/store.js';
+import chartsManager from './modules/charts.manager.js';
+import tablesManager from './modules/tables.manager.js';
+import uiManager from './modules/ui.manager.js';
 import * as helpers from './utils/helpers.js';
-
-// =============================================
-// Application State
-// =============================================
-
-const state = {
-    // Data
-    allData: [],
-    filteredData: [],
-    displayData: [],
-    
-    // UI State
-    activeTab: 'overview',
-    currentPage: 1,
-    rowsPerPage: 15,
-    
-    // Charts
-    charts: {},
-    
-    // Filters
-    filters: {
-        type: 'this_month',
-        year: null,
-        startDate: null,
-        endDate: null,
-        zone: null,
-        courier: null
-    },
-    
-    // Operation mode
-    useSupabase: false, // true = database, false = localStorage
-    connectionType: 'local', // 'api', 'direct', or 'local'
-
-    // Validation
-    validationIssues: []
-};
+import { FILE_TYPES } from './utils/constants.js';
 
 // =============================================
 // Initialization
 // =============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚚 Delivery Analytics Pro starting...');
-    
-    // Check if Supabase is configured
-    await checkSupabaseConnection();
-    
+    console.log('🚚 Delivery Analytics Pro v2.0 starting...');
+
+    // Initialize UI manager
+    uiManager.init();
+
+    // Check connection
+    await checkConnection();
+
     // Load data
     await loadData();
-    
-    // Initialize UI
+
+    // Initialize event listeners
     initializeEventListeners();
-    
+
+    // Update version display
+    updateVersion();
+
     console.log('✅ Application ready');
 });
 
 /**
- * Checks connection to backend
+ * Check connection to backend/database
  */
-async function checkSupabaseConnection() {
-    try {
-        const connectionType = await supabaseService.checkConnection();
+async function checkConnection() {
+    uiManager.showLoading(true);
 
-        if (connectionType === 'api') {
-            state.useSupabase = true;
-            state.connectionType = 'api';
-            console.log('✅ Connected to Backend API');
-            updateConnectionStatus(true, 'API');
-        } else if (connectionType === 'direct') {
-            state.useSupabase = true;
-            state.connectionType = 'direct';
-            console.log('✅ Connected to Supabase directly');
-            updateConnectionStatus(true, 'DB');
-        } else {
-            state.useSupabase = false;
-            state.connectionType = 'local';
-            console.log('⚠️ Using localStorage');
-            updateConnectionStatus(false);
-        }
+    try {
+        const connectionType = await dataService.checkConnection();
+        store.setConnection(connectionType, connectionType !== 'local');
+        uiManager.updateConnectionStatus(connectionType);
     } catch (error) {
-        state.useSupabase = false;
-        state.connectionType = 'local';
-        console.log('⚠️ Connection failed, using localStorage');
-        updateConnectionStatus(false);
+        console.error('Connection check failed:', error);
+        store.setConnection('local', false);
+        uiManager.updateConnectionStatus('local');
     }
+
+    uiManager.showLoading(false);
 }
 
 /**
- * Updates the connection indicator
+ * Update version badge
  */
-function updateConnectionStatus(connected, type = '') {
-    const indicator = document.getElementById('connectionStatus');
-    if (indicator) {
-        if (connected) {
-            indicator.innerHTML = `<i class="fas fa-cloud"></i> ${type}`;
-            indicator.className = 'status-online';
-            indicator.title = type === 'API' ? 'Connected via Backend API' : 'Connected directly to Supabase';
-        } else {
-            indicator.innerHTML = '<i class="fas fa-database"></i> Local';
-            indicator.className = 'status-offline';
-            indicator.title = 'Using local storage';
-        }
-    }
+function updateVersion() {
+    const badge = document.getElementById('appVersion');
+    if (badge) badge.textContent = 'v2.0.0';
 }
 
 // =============================================
 // Data Loading
 // =============================================
 
-/**
- * Loads data from the appropriate source
- */
 async function loadData() {
-    showLoading(true);
-    
+    uiManager.showLoading(true);
+
     try {
-        if (state.useSupabase) {
-            await loadFromSupabase();
+        if (store.isDeliveryMode()) {
+            await loadDeliveryData();
         } else {
-            loadFromLocalStorage();
+            await loadPickupData();
         }
-        
+
         populateFilters();
         applyFilters();
-        
+
     } catch (error) {
         console.error('Load error:', error);
-        helpers.showToast('Помилка завантаження даних', 'error');
+        helpers.showToast('Error loading data', 'error');
     } finally {
-        showLoading(false);
+        uiManager.showLoading(false);
     }
 }
 
-/**
- * Loads data from Supabase
- */
-async function loadFromSupabase() {
-    const deliveries = await supabaseService.getDeliveries();
-    
-    state.allData = deliveries.map(d => ({
-        id: d.id,
-        _dateObj: new Date(d.delivery_date),
-        _dateStr: d.delivery_date,
-        "ПІБ кур'єра": d.couriers?.full_name || 'Unknown',
-        'Номер авто': d.couriers?.vehicle_number || '-',
-        'Підрозділ відомості': d.zones?.name || '-',
-        _loaded: d.loaded_count,
-        _delivered: d.delivered_count
-    }));
-    
-    helpers.showToast(`Завантажено ${state.allData.length} записів з бази`, 'success');
+async function loadDeliveryData() {
+    if (store.useSupabase) {
+        const data = await dataService.getCourierPerformance();
+        store.deliveryData.all = data;
+        helpers.showToast(`Loaded ${data.length} delivery records`, 'success');
+    } else {
+        // Load from localStorage
+        const stored = helpers.loadFromStorage('deliveryDataV4');
+        if (stored && stored.length > 0) {
+            store.deliveryData.all = stored.map(row => ({
+                ...row,
+                report_date: row._dateStr || row.report_date,
+                courier_name: row["ПІБ кур'єра"] || row.courier_name,
+                car_number: row['Номер авто'] || row.car_number,
+                department: row['Підрозділ відомості'] || row.department,
+                loaded_parcels: row._loaded || row.loaded_parcels || 0,
+                delivered_parcels: row._delivered || row.delivered_parcels || 0
+            }));
+            helpers.showToast(`Loaded ${stored.length} records from local storage`, 'info');
+        }
+    }
 }
 
-/**
- * Loads data from localStorage
- */
-function loadFromLocalStorage() {
-    const stored = helpers.loadFromStorage('deliveryDataV4');
-    
-    if (stored && stored.length > 0) {
-        state.allData = stored.map(row => ({
-            ...row,
-            _dateObj: row._dateStr ? new Date(row._dateStr) : null
-        }));
-        helpers.showToast(`Завантажено ${state.allData.length} записів`, 'info');
+async function loadPickupData() {
+    if (store.useSupabase) {
+        const data = await dataService.getPickupOrders();
+        store.pickupData.all = data;
+        helpers.showToast(`Loaded ${data.length} pickup orders`, 'success');
+    } else {
+        const stored = helpers.loadFromStorage('pickupDataV1');
+        if (stored && stored.length > 0) {
+            store.pickupData.all = stored;
+            helpers.showToast(`Loaded ${stored.length} pickup orders from local storage`, 'info');
+        }
     }
 }
 
@@ -177,173 +130,164 @@ function loadFromLocalStorage() {
 // File Upload
 // =============================================
 
-/**
- * Handles file upload
- */
 async function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
-    
-    showLoading(true);
-    
+
+    uiManager.showLoading(true);
+
     try {
-        // Parse the file
+        // Parse the file (auto-detects type)
         const result = await excelParser.parseFile(file);
-        
-        // Show warnings
+
+        console.log(`📁 File type detected: ${result.fileType}`);
+        console.log(`📊 Records parsed: ${result.stats.processed}`);
+
+        // Show warnings/errors
         if (result.warnings.length > 0) {
-            displayValidationAlerts(result.warnings, 'warning');
+            uiManager.showAlerts(result.warnings, 'warning');
         }
-        
         if (result.errors.length > 0) {
-            displayValidationAlerts(result.errors, 'error');
+            uiManager.showAlerts(result.errors, 'error');
         }
-        
+
+        if (result.records.length === 0) {
+            helpers.showToast('No valid records found', 'error');
+            return;
+        }
+
+        // Switch to correct data type
+        if (result.fileType !== store.activeDataType) {
+            store.setActiveDataType(result.fileType);
+            updateDataTypeUI();
+        }
+
         // Save data
-        if (result.records.length > 0) {
-            if (state.useSupabase) {
-                await saveToSupabase(result.records);
-            } else {
-                saveToLocalStorage(result.records);
-            }
-            
-            await loadData();
-            
-            helpers.showToast(
-                `Імпортовано ${result.records.length} записів`, 
-                result.errors.length > 0 ? 'warning' : 'success'
-            );
+        if (result.fileType === FILE_TYPES.DELIVERY) {
+            await saveDeliveryData(result.records, result.filename);
         } else {
-            helpers.showToast('Не знайдено валідних записів', 'error');
+            await savePickupData(result.records, result.filename);
         }
-        
+
+        // Reload and update UI
+        await loadData();
+
+        const typeLabel = result.fileType === FILE_TYPES.DELIVERY ? 'delivery' : 'pickup';
+        helpers.showToast(
+            `Imported ${result.records.length} ${typeLabel} records`,
+            result.errors.length > 0 ? 'warning' : 'success'
+        );
+
     } catch (error) {
         console.error('Upload error:', error);
-        helpers.showToast('Помилка обробки файлу: ' + error.message, 'error');
+        helpers.showToast('Error processing file: ' + error.message, 'error');
     } finally {
-        showLoading(false);
-        event.target.value = ''; // Reset input
+        uiManager.showLoading(false);
+        event.target.value = '';
     }
 }
 
-/**
- * Saves records to Supabase
- */
-async function saveToSupabase(records) {
-    const result = await supabaseService.importDeliveries(records, (progress) => {
-        updateProgressBar(progress.percent);
-    });
-    
-    if (result.failed > 0) {
-        console.warn('Import errors:', result.errors);
-        helpers.showToast(`Помилки при імпорті: ${result.failed}`, 'warning');
+async function saveDeliveryData(records, filename) {
+    if (store.useSupabase) {
+        const result = await dataService.importCourierPerformance(records, filename);
+        if (result.failed > 0) {
+            console.warn('Import errors:', result.errors);
+        }
+    } else {
+        // Save to localStorage
+        store.deliveryData.all = [...store.deliveryData.all, ...records];
+        helpers.saveToStorage('deliveryDataV4', store.deliveryData.all);
     }
 }
 
-/**
- * Saves records to localStorage
- */
-function saveToLocalStorage(records) {
-    // Convert format
-    const converted = records.map(r => ({
-        "ПІБ кур'єра": r.courierName,
-        'Номер авто': r.vehicleNumber,
-        'Підрозділ відомості': r.zoneName,
-        _dateObj: r._dateObj,
-        _dateStr: r.deliveryDate,
-        _loaded: r.loadedCount,
-        _delivered: r.deliveredCount
-    }));
-    
-    // Add to existing
-    state.allData = [...state.allData, ...converted];
-    state.allData.sort((a, b) => new Date(b._dateStr) - new Date(a._dateStr));
-    
-    // Save
-    helpers.saveToStorage('deliveryDataV4', state.allData);
+async function savePickupData(records, filename) {
+    if (store.useSupabase) {
+        const result = await dataService.importPickupOrders(records, filename);
+        if (result.failed > 0) {
+            console.warn('Import errors:', result.errors);
+        }
+    } else {
+        store.pickupData.all = [...store.pickupData.all, ...records];
+        helpers.saveToStorage('pickupDataV1', store.pickupData.all);
+    }
 }
 
 // =============================================
 // Filtering
 // =============================================
 
-/**
- * Populates filters
- */
 function populateFilters() {
+    const data = store.allData;
+
     // Years
-    const years = [...new Set(state.allData
-        .filter(d => d._dateObj)
-        .map(d => d._dateObj.getFullYear())
+    const years = [...new Set(data
+        .map(d => {
+            const date = d.report_date || d.execution_date;
+            return date ? new Date(date).getFullYear() : null;
+        })
+        .filter(Boolean)
     )].sort().reverse();
-    
+
     const yearSelect = document.getElementById('filterYear');
     if (yearSelect) {
-        yearSelect.innerHTML = years.map(y => 
-            `<option value="${y}">${y}</option>`
-        ).join('');
+        yearSelect.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
     }
-    
-    // Zones
-    const zones = [...new Set(state.allData
-        .map(d => d['Підрозділ відомості'])
-        .filter(Boolean)
-    )].sort();
-    
-    const zoneSelect = document.getElementById('filterZone');
-    if (zoneSelect) {
-        zoneSelect.innerHTML = '<option value="">Всі зони</option>' + 
-            zones.map(z => `<option value="${z}">${z}</option>`).join('');
-    }
-    
-    // Couriers
-    const couriers = [...new Set(state.allData
-        .map(d => d["ПІБ кур'єра"])
-        .filter(Boolean)
-    )].sort();
-    
-    const courierSelect = document.getElementById('filterCourier');
-    if (courierSelect) {
-        courierSelect.innerHTML = '<option value="">Всі курʼєри</option>' + 
-            couriers.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    // Zones/Departments (Delivery) or Countries (Pickup)
+    if (store.isDeliveryMode()) {
+        const departments = [...new Set(data.map(d => d.department).filter(Boolean))].sort();
+        const zoneSelect = document.getElementById('filterZone');
+        if (zoneSelect) {
+            zoneSelect.innerHTML = '<option value="">All departments</option>' +
+                departments.map(z => `<option value="${z}">${z}</option>`).join('');
+        }
+
+        const couriers = [...new Set(data.map(d => d.courier_name).filter(Boolean))].sort();
+        const courierSelect = document.getElementById('filterCourier');
+        if (courierSelect) {
+            courierSelect.innerHTML = '<option value="">All couriers</option>' +
+                couriers.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+    } else {
+        const countries = [...new Set([
+            ...data.map(d => d.sender_country),
+            ...data.map(d => d.recipient_country)
+        ].filter(Boolean))].sort();
+
+        const zoneSelect = document.getElementById('filterZone');
+        if (zoneSelect) {
+            zoneSelect.innerHTML = '<option value="">All countries</option>' +
+                countries.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
     }
 }
 
-/**
- * Applies filters
- */
 function applyFilters() {
     const type = document.getElementById('filterType')?.value || 'this_month';
     const now = new Date();
-    
-    state.filteredData = state.allData.filter(item => {
-        if (!item._dateObj) return false;
-        const d = item._dateObj;
-        
-        // Filter by period
+    const data = store.allData;
+
+    store.filteredData = data.filter(item => {
+        const dateStr = item.report_date || item.execution_date;
+        if (!dateStr) return false;
+
+        const d = new Date(dateStr);
         let dateMatch = true;
+
         switch (type) {
             case 'all':
                 dateMatch = true;
                 break;
             case 'this_month':
-                dateMatch = d.getMonth() === now.getMonth() && 
-                           d.getFullYear() === now.getFullYear();
+                dateMatch = d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
                 break;
             case 'last_month':
                 const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                dateMatch = d.getMonth() === lastMonth.getMonth() && 
-                           d.getFullYear() === lastMonth.getFullYear();
+                dateMatch = d.getMonth() === lastMonth.getMonth() && d.getFullYear() === lastMonth.getFullYear();
                 break;
             case 'this_week':
                 const thisWeek = helpers.getWeekBounds(now);
                 dateMatch = d >= thisWeek.start && d <= thisWeek.end;
-                break;
-            case 'last_week':
-                const lastWeekDate = new Date(now);
-                lastWeekDate.setDate(now.getDate() - 7);
-                const lastWeek = helpers.getWeekBounds(lastWeekDate);
-                dateMatch = d >= lastWeek.start && d <= lastWeek.end;
                 break;
             case 'year':
                 const selectedYear = parseInt(document.getElementById('filterYear')?.value) || now.getFullYear();
@@ -360,42 +304,42 @@ function applyFilters() {
                 }
                 break;
         }
-        
+
         if (!dateMatch) return false;
-        
-        // Filter by zone
-        const zoneFilter = document.getElementById('filterZone')?.value;
-        if (zoneFilter && item['Підрозділ відомості'] !== zoneFilter) {
-            return false;
+
+        // Additional filters
+        if (store.isDeliveryMode()) {
+            const deptFilter = document.getElementById('filterZone')?.value;
+            if (deptFilter && item.department !== deptFilter) return false;
+
+            const courierFilter = document.getElementById('filterCourier')?.value;
+            if (courierFilter && item.courier_name !== courierFilter) return false;
+        } else {
+            const countryFilter = document.getElementById('filterZone')?.value;
+            if (countryFilter && item.sender_country !== countryFilter && item.recipient_country !== countryFilter) {
+                return false;
+            }
         }
-        
-        // Filter by courier
-        const courierFilter = document.getElementById('filterCourier')?.value;
-        if (courierFilter && item["ПІБ кур'єра"] !== courierFilter) {
-            return false;
-        }
-        
+
         return true;
     });
-    
-    state.currentPage = 1;
+
+    store.setPage(1);
+    store.displayData = [...store.filteredData];
     updateDashboard();
 }
 
-/**
- * Toggles date input visibility
- */
 function toggleDateInputs() {
     const type = document.getElementById('filterType')?.value;
-    
+
     const yearGroup = document.getElementById('yearSelectGroup');
     const startGroup = document.getElementById('dateStartGroup');
     const endGroup = document.getElementById('dateEndGroup');
-    
+
     if (yearGroup) yearGroup.style.display = type === 'year' ? 'flex' : 'none';
     if (startGroup) startGroup.style.display = type === 'custom' ? 'flex' : 'none';
     if (endGroup) endGroup.style.display = type === 'custom' ? 'flex' : 'none';
-    
+
     if (type !== 'custom') {
         applyFilters();
     }
@@ -405,455 +349,72 @@ function toggleDateInputs() {
 // Dashboard Updates
 // =============================================
 
-/**
- * Updates the entire dashboard
- */
 function updateDashboard() {
-    updateStats();
-    updateCharts();
-    updateRanking();
-    updateInsights();
-    searchTable();
+    uiManager.updateStats();
+    chartsManager.updateAll();
+    tablesManager.renderRankingTable();
+    uiManager.updateInsights();
+    tablesManager.search(document.getElementById('tableSearch')?.value || '');
 }
 
-/**
- * Updates the insights panel with smart recommendations
- */
-async function updateInsights() {
-    const insightsContainer = document.getElementById('insightsContainer');
-    if (!insightsContainer) return;
+// =============================================
+// Data Type Switching
+// =============================================
 
-    // Only fetch insights if connected to API
-    if (state.connectionType !== 'api') {
-        // Generate local insights from filtered data
-        const insights = generateLocalInsights();
-        renderInsights(insightsContainer, insights);
-        return;
+function switchDataType(type) {
+    if (type === store.activeDataType) return;
+
+    store.setActiveDataType(type);
+    updateDataTypeUI();
+    loadData();
+}
+
+function updateDataTypeUI() {
+    // Update toggle buttons
+    document.querySelectorAll('.data-type-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.type === store.activeDataType);
+    });
+
+    // Update table headers
+    updateTableHeaders();
+
+    // Update filter labels
+    const zoneLabel = document.querySelector('label[for="filterZone"]');
+    if (zoneLabel) {
+        zoneLabel.textContent = store.isDeliveryMode() ? 'Department' : 'Country';
     }
 
-    try {
-        // Get date range from current filter
-        const dates = getCurrentDateRange();
-        const analytics = await supabaseService.getFullAnalytics(dates.start, dates.end);
-
-        if (analytics && analytics.insights) {
-            renderInsights(insightsContainer, analytics.insights);
-        }
-    } catch (error) {
-        console.error('Failed to load insights:', error);
-        // Fallback to local insights
-        const insights = generateLocalInsights();
-        renderInsights(insightsContainer, insights);
+    // Show/hide courier filter
+    const courierGroup = document.getElementById('courierFilterGroup');
+    if (courierGroup) {
+        courierGroup.style.display = store.isDeliveryMode() ? 'flex' : 'none';
     }
 }
 
-/**
- * Generate insights from local data
- */
-function generateLocalInsights() {
-    const data = state.filteredData;
-    if (!data || data.length === 0) return ['Завантажте дані для отримання інсайтів'];
+function updateTableHeaders() {
+    const headerRow = document.querySelector('#dataTable thead tr');
+    if (!headerRow) return;
 
-    const insights = [];
-    const totalLoaded = helpers.sumBy(data, '_loaded');
-    const totalDelivered = helpers.sumBy(data, '_delivered');
-    const successRate = totalLoaded > 0 ? (totalDelivered / totalLoaded * 100) : 0;
-
-    // Courier stats
-    const courierStats = {};
-    data.forEach(d => {
-        const name = d["ПІБ кур'єра"];
-        if (!courierStats[name]) courierStats[name] = { loaded: 0, delivered: 0 };
-        courierStats[name].loaded += d._loaded;
-        courierStats[name].delivered += d._delivered;
-    });
-
-    // Find best courier
-    let bestCourier = { name: '', rate: 0 };
-    let worstCourier = { name: '', rate: 100 };
-    Object.entries(courierStats).forEach(([name, stats]) => {
-        if (stats.loaded < 50) return; // Ignore couriers with few deliveries
-        const rate = stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0;
-        if (rate > bestCourier.rate) bestCourier = { name, rate };
-        if (rate < worstCourier.rate) worstCourier = { name, rate };
-    });
-
-    // Zone stats
-    const zoneStats = {};
-    data.forEach(d => {
-        const zone = d['Підрозділ відомості'] || 'Невизначено';
-        if (!zoneStats[zone]) zoneStats[zone] = { loaded: 0, delivered: 0 };
-        zoneStats[zone].loaded += d._loaded;
-        zoneStats[zone].delivered += d._delivered;
-    });
-
-    // Find worst zone
-    let worstZone = { name: '', rate: 100 };
-    Object.entries(zoneStats).forEach(([name, stats]) => {
-        const rate = stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0;
-        if (rate < worstZone.rate) worstZone = { name, rate };
-    });
-
-    // Generate insights
-    if (bestCourier.name) {
-        insights.push(`Найкращий кур'єр: ${bestCourier.name} (${bestCourier.rate.toFixed(1)}% успішності)`);
-    }
-
-    if (successRate < 95) {
-        insights.push(`Загальна успішність ${successRate.toFixed(1)}% нижче цілі (95%)`);
+    if (store.isDeliveryMode()) {
+        headerRow.innerHTML = `
+            <th onclick="sortTable(0, 'date')">Date <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(1)">Courier <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(2)">Vehicle <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(3)">Department <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(4, 'number')">Loaded <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(5, 'number')">Delivered <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(6, 'number')">Success <i class="fas fa-sort"></i></th>
+        `;
     } else {
-        insights.push(`Відмінна успішність: ${successRate.toFixed(1)}%`);
-    }
-
-    if (worstZone.rate < 90) {
-        insights.push(`Увага: зона "${worstZone.name}" має низьку успішність (${worstZone.rate.toFixed(1)}%)`);
-    }
-
-    const undelivered = totalLoaded - totalDelivered;
-    if (undelivered > 0) {
-        insights.push(`Недоставлено посилок: ${helpers.formatNumber(undelivered)}`);
-    }
-
-    return insights.length > 0 ? insights : ['Всі показники в нормі'];
-}
-
-/**
- * Render insights to container
- */
-function renderInsights(container, insights) {
-    container.innerHTML = insights.map((insight, i) => {
-        const isWarning = insight.includes('Увага') || insight.includes('нижче');
-        const isSuccess = insight.includes('Найкращий') || insight.includes('Відмінна');
-        const icon = isWarning ? 'exclamation-triangle' : isSuccess ? 'check-circle' : 'info-circle';
-        const colorClass = isWarning ? 'warning' : isSuccess ? 'success' : 'info';
-
-        return `
-            <div class="insight-item insight-${colorClass}">
-                <i class="fas fa-${icon}"></i>
-                <span>${insight}</span>
-            </div>
+        headerRow.innerHTML = `
+            <th onclick="sortTable(0, 'date')">Date <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(1)">Document <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(2)">From <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(3)">To <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(4, 'number')">Weight <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(5, 'number')">Cost <i class="fas fa-sort"></i></th>
+            <th onclick="sortTable(6)">Status <i class="fas fa-sort"></i></th>
         `;
-    }).join('');
-}
-
-/**
- * Get current date range from filter
- */
-function getCurrentDateRange() {
-    const type = document.getElementById('filterType')?.value || 'this_month';
-    const now = new Date();
-    let start, end;
-
-    switch (type) {
-        case 'this_month':
-            start = new Date(now.getFullYear(), now.getMonth(), 1);
-            end = now;
-            break;
-        case 'last_month':
-            start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            end = new Date(now.getFullYear(), now.getMonth(), 0);
-            break;
-        case 'this_week':
-            const week = helpers.getWeekBounds(now);
-            start = week.start;
-            end = week.end;
-            break;
-        case 'year':
-            const year = parseInt(document.getElementById('filterYear')?.value) || now.getFullYear();
-            start = new Date(year, 0, 1);
-            end = new Date(year, 11, 31);
-            break;
-        case 'custom':
-            start = new Date(document.getElementById('dateStart')?.value || now);
-            end = new Date(document.getElementById('dateEnd')?.value || now);
-            break;
-        default:
-            start = new Date(now.getFullYear(), 0, 1);
-            end = now;
-    }
-
-    return {
-        start: start.toISOString().split('T')[0],
-        end: end.toISOString().split('T')[0]
-    };
-}
-
-/**
- * Updates the ranking table
- */
-function updateRanking() {
-    const tbody = document.getElementById('rankingBody');
-    if (!tbody) return;
-
-    const data = state.filteredData;
-    if (!data || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Завантажте дані для перегляду рейтингу</td></tr>';
-        return;
-    }
-
-    // Aggregate by courier
-    const courierStats = {};
-    data.forEach(d => {
-        const name = d["ПІБ кур'єра"];
-        const vehicle = d['Номер авто'] || '-';
-        if (!courierStats[name]) {
-            courierStats[name] = { vehicle, loaded: 0, delivered: 0 };
-        }
-        courierStats[name].loaded += d._loaded;
-        courierStats[name].delivered += d._delivered;
-    });
-
-    // Sort by success rate
-    const sorted = Object.entries(courierStats)
-        .map(([name, stats]) => ({
-            name,
-            vehicle: stats.vehicle,
-            loaded: stats.loaded,
-            delivered: stats.delivered,
-            rate: stats.loaded > 0 ? (stats.delivered / stats.loaded * 100) : 0
-        }))
-        .filter(c => c.loaded >= 50) // Minimum 50 packages
-        .sort((a, b) => b.rate - a.rate)
-        .slice(0, 10);
-
-    if (sorted.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">Немає даних для рейтингу</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = sorted.map((c, i) => {
-        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
-        const badgeClass = helpers.getRateBadgeClass(c.rate);
-        return `
-            <tr>
-                <td><span class="rank-badge ${rankClass}">${i + 1}</span></td>
-                <td style="font-weight: 500">${c.name}</td>
-                <td>${c.vehicle}</td>
-                <td>${helpers.formatNumber(c.loaded)}</td>
-                <td>${helpers.formatNumber(c.delivered)}</td>
-                <td><span class="badge ${badgeClass}">${helpers.formatPercent(c.rate)}</span></td>
-            </tr>
-        `;
-    }).join('');
-}
-
-/**
- * Updates statistics
- */
-function updateStats() {
-    const data = state.filteredData;
-    
-    const totalLoaded = helpers.sumBy(data, '_loaded');
-    const totalDelivered = helpers.sumBy(data, '_delivered');
-    const rate = helpers.calculateSuccessRate(totalLoaded, totalDelivered);
-    
-    const uniqueCouriers = new Set(data.map(d => d["ПІБ кур'єра"])).size;
-    const uniqueDays = new Set(data.map(d => d._dateStr?.split('T')[0])).size;
-    
-    const statsGrid = document.getElementById('statsGrid');
-    if (statsGrid) {
-        statsGrid.innerHTML = `
-            <div class="stat-card">
-                <span class="stat-label">Всього посилок</span>
-                <span class="stat-value">${helpers.formatNumber(totalLoaded)}</span>
-                <span class="stat-sub">Завантажено за період</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-label">Доставлено</span>
-                <span class="stat-value">${helpers.formatNumber(totalDelivered)}</span>
-                <span class="stat-sub up"><i class="fas fa-check-circle"></i> ${helpers.formatPercent(rate)} успіху</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-label">Активних курʼєрів</span>
-                <span class="stat-value">${uniqueCouriers}</span>
-                <span class="stat-sub">За цей період</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-label">Днів доставки</span>
-                <span class="stat-value">${uniqueDays}</span>
-                <span class="stat-sub">Дні з активністю</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-label">Недоставлено</span>
-                <span class="stat-value">${helpers.formatNumber(totalLoaded - totalDelivered)}</span>
-                <span class="stat-sub down">${helpers.formatPercent(100 - rate)} від загальної</span>
-            </div>
-        `;
-    }
-}
-
-/**
- * Updates charts (Chart.js)
- */
-function updateCharts() {
-    const data = state.filteredData;
-    
-    // If no data, do not draw anything, but prevent crash
-    if (!data || data.length === 0) return;
-
-    // Helper to safely get context
-    const getCtx = (id) => {
-        const canvas = document.getElementById(id);
-        return canvas ? canvas.getContext('2d') : null;
-    };
-
-    // 1. Delivery Dynamics (Timeline)
-    const ctxTimeline = getCtx('timelineChart');
-    if (ctxTimeline) {
-        // Group by date
-        const timelineData = {};
-        data.forEach(d => {
-            const date = d._dateStr ? d._dateStr.split('T')[0] : 'Unknown';
-            if (!timelineData[date]) timelineData[date] = { loaded: 0, delivered: 0 };
-            timelineData[date].loaded += d._loaded;
-            timelineData[date].delivered += d._delivered;
-        });
-        
-        const labels = Object.keys(timelineData).sort();
-        const displayLabels = labels.map(d => new Date(d).toLocaleDateString('uk-UA', {day: '2-digit', month: '2-digit'}));
-        
-        if (state.charts.timeline) state.charts.timeline.destroy();
-        state.charts.timeline = new Chart(ctxTimeline, {
-            type: 'line',
-            data: {
-                labels: displayLabels,
-                datasets: [
-                    { 
-                        label: 'Завантажено', 
-                        data: labels.map(d => timelineData[d].loaded), 
-                        borderColor: '#9ca3af', 
-                        tension: 0.3,
-                        borderWidth: 2,
-                        pointRadius: 3
-                    },
-                    { 
-                        label: 'Доставлено', 
-                        data: labels.map(d => timelineData[d].delivered), 
-                        borderColor: '#4f46e5', 
-                        backgroundColor: 'rgba(79, 70, 229, 0.1)', 
-                        fill: true,
-                        tension: 0.3,
-                        borderWidth: 2,
-                        pointRadius: 3
-                    }
-                ]
-            },
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false }
-            }
-        });
-    }
-
-    // 2. Success by Zones (Bar Chart)
-    const ctxZone = getCtx('zoneChart');
-    if (ctxZone) {
-        const zoneStats = {};
-        data.forEach(d => {
-            const zone = d['Підрозділ відомості'] || 'Невизначено';
-            if (!zoneStats[zone]) zoneStats[zone] = { loaded: 0, delivered: 0 };
-            zoneStats[zone].loaded += d._loaded;
-            zoneStats[zone].delivered += d._delivered;
-        });
-
-        const zones = Object.keys(zoneStats).sort();
-        const rates = zones.map(z => zoneStats[z].loaded ? (zoneStats[z].delivered / zoneStats[z].loaded * 100) : 0);
-
-        if (state.charts.zone) state.charts.zone.destroy();
-        state.charts.zone = new Chart(ctxZone, {
-            type: 'bar',
-            data: {
-                labels: zones,
-                datasets: [{
-                    label: 'Success Rate (%)',
-                    data: rates,
-                    backgroundColor: rates.map(r => r >= 95 ? '#10b981' : r >= 85 ? '#f59e0b' : '#ef4444'),
-                    borderRadius: 4
-                }]
-            },
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false,
-                scales: { y: { beginAtZero: true, max: 100 } } 
-            }
-        });
-    }
-
-    // 3. Success Trend (Line Chart)
-    const ctxTrend = getCtx('trendChart');
-    if (ctxTrend) {
-        // Sort data by date for trend
-        const sortedData = [...data].sort((a, b) => new Date(a._dateStr) - new Date(b._dateStr));
-        const dateGroups = {};
-        
-        sortedData.forEach(d => {
-            const date = d._dateStr ? d._dateStr.split('T')[0] : 'Unknown';
-            if (!dateGroups[date]) dateGroups[date] = { l: 0, d: 0 };
-            dateGroups[date].l += d._loaded;
-            dateGroups[date].d += d._delivered;
-        });
-
-        const labels = Object.keys(dateGroups);
-        const trendValues = labels.map(d => {
-            const day = dateGroups[d];
-            return day.l ? (day.d / day.l * 100) : 0;
-        });
-
-        if (state.charts.trend) state.charts.trend.destroy();
-        state.charts.trend = new Chart(ctxTrend, {
-            type: 'line',
-            data: {
-                labels: labels.map(d => new Date(d).toLocaleDateString('uk-UA', {day: '2-digit', month: '2-digit'})),
-                datasets: [{
-                    label: 'Успішність (%)',
-                    data: trendValues,
-                    borderColor: '#10b981',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    pointRadius: 0,
-                    pointHoverRadius: 4
-                }]
-            },
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false,
-                scales: { y: { beginAtZero: false } }
-            }
-        });
-    }
-
-    // 4. Distribution (Doughnut)
-    const ctxDist = getCtx('distributionChart');
-    if (ctxDist) {
-        // Calculate success rate for each record separately
-        let buckets = { '<85%': 0, '85-95%': 0, '>95%': 0 };
-        
-        data.forEach(d => {
-            const rate = d._loaded ? (d._delivered / d._loaded * 100) : 0;
-            if (rate < 85) buckets['<85%']++;
-            else if (rate < 95) buckets['85-95%']++;
-            else buckets['>95%']++;
-        });
-
-        if (state.charts.distribution) state.charts.distribution.destroy();
-        state.charts.distribution = new Chart(ctxDist, {
-            type: 'doughnut',
-            data: {
-                labels: ['< 85%', '85% - 95%', '> 95%'],
-                datasets: [{
-                    data: [buckets['<85%'], buckets['85-95%'], buckets['>95%']],
-                    backgroundColor: ['#ef4444', '#f59e0b', '#10b981'],
-                    borderWidth: 0
-                }]
-            },
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false,
-                cutout: '70%',
-                plugins: { legend: { position: 'right' } }
-            }
-        });
     }
 }
 
@@ -867,245 +428,129 @@ function initializeEventListeners() {
     if (fileInput) {
         fileInput.addEventListener('change', handleFileUpload);
     }
-    
+
     // Filter changes
     const filterType = document.getElementById('filterType');
     if (filterType) {
         filterType.addEventListener('change', toggleDateInputs);
     }
-    
+
     // Search
     const tableSearch = document.getElementById('tableSearch');
     if (tableSearch) {
-        tableSearch.addEventListener('input', helpers.debounce(searchTable, 300));
+        tableSearch.addEventListener('input', helpers.debounce(() => {
+            tablesManager.search(tableSearch.value);
+        }, 300));
+    }
+
+    // Data type toggle
+    document.querySelectorAll('.data-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            switchDataType(btn.dataset.type);
+        });
+    });
+}
+
+// =============================================
+// Tab Switching
+// =============================================
+
+function switchTab(tabName) {
+    store.setActiveTab(tabName);
+    uiManager.switchTab(tabName);
+
+    // Update content based on tab
+    if (tabName === 'insights') {
+        uiManager.updateInsights();
+    } else if (tabName === 'ranking') {
+        tablesManager.renderRankingTable();
+    } else if (tabName === 'data') {
+        tablesManager.renderDataTable();
     }
 }
 
 // =============================================
-// UI Helpers
+// Export Functions
 // =============================================
 
-function showLoading(show) {
-    const loader = document.getElementById('loadingOverlay');
-    if (loader) {
-        loader.style.display = show ? 'flex' : 'none';
+function exportData() {
+    const data = store.filteredData;
+    if (data.length === 0) {
+        helpers.showToast('No data to export', 'error');
+        return;
+    }
+
+    let exportData;
+    if (store.isDeliveryMode()) {
+        exportData = data.map(d => ({
+            'Date': d.report_date,
+            'Courier': d.courier_name,
+            'Vehicle': d.car_number,
+            'Department': d.department,
+            'Loaded': d.loaded_parcels,
+            'Delivered': d.delivered_parcels,
+            'Success Rate': helpers.formatPercent(
+                d.loaded_parcels > 0 ? (d.delivered_parcels / d.loaded_parcels * 100) : 0
+            )
+        }));
+    } else {
+        exportData = data.map(d => ({
+            'Date': d.execution_date,
+            'Document': d.pickup_doc_number,
+            'From': d.sender_country,
+            'To': d.recipient_country,
+            'Weight': d.actual_weight,
+            'Cost': d.delivery_cost,
+            'Status': d.shipment_status
+        }));
+    }
+
+    const filename = `${store.activeDataType}_export_${helpers.formatDate(new Date(), 'iso')}.xlsx`;
+    helpers.exportToExcel(exportData, filename);
+    helpers.showToast(`Exported ${exportData.length} records`, 'success');
+}
+
+async function clearAllData() {
+    const dataType = store.isDeliveryMode() ? 'delivery' : 'pickup';
+    if (!confirm(`Are you sure you want to delete ALL ${dataType} data? This action cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        if (store.useSupabase) {
+            await dataService.clearAllDeliveries();
+            helpers.showToast('Database cleared', 'success');
+        } else {
+            const key = store.isDeliveryMode() ? 'deliveryDataV4' : 'pickupDataV1';
+            localStorage.removeItem(key);
+            helpers.showToast('Local data cleared', 'success');
+        }
+
+        // Reset state
+        if (store.isDeliveryMode()) {
+            store.deliveryData = { all: [], filtered: [], display: [] };
+        } else {
+            store.pickupData = { all: [], filtered: [], display: [] };
+        }
+
+        setTimeout(() => location.reload(), 1000);
+
+    } catch (error) {
+        console.error('Clear error:', error);
+        helpers.showToast('Error clearing data: ' + error.message, 'error');
     }
 }
 
-function updateProgressBar(percent) {
-    const bar = document.getElementById('progressBar');
-    if (bar) {
-        bar.style.width = `${percent}%`;
-        bar.textContent = `${percent}%`;
-    }
-}
-
-function displayValidationAlerts(issues, type = 'warning') {
-    const container = document.getElementById('alertContainer');
-    if (!container) return;
-    
-    const alertsHtml = issues.slice(0, 5).map(issue => `
-        <div class="alert alert-${type}">
-            <i class="fas fa-${type === 'error' ? 'exclamation-circle' : 'exclamation-triangle'}"></i>
-            <span>${issue.message || issue}</span>
-        </div>
-    `).join('');
-    
-    container.innerHTML = alertsHtml;
-}
-
 // =============================================
-// Export global functions for HTML onclick
+// Global Exports for HTML onclick
 // =============================================
 
 window.applyFilters = applyFilters;
 window.toggleDateInputs = toggleDateInputs;
 window.switchTab = switchTab;
-window.searchTable = searchTable;
-window.sortTable = sortTable;
-window.changePage = changePage;
+window.switchDataType = switchDataType;
+window.searchTable = () => tablesManager.search(document.getElementById('tableSearch')?.value || '');
+window.sortTable = (col, type) => tablesManager.sort(col, type);
+window.changePage = (delta) => tablesManager.changePage(delta);
 window.exportData = exportData;
 window.clearAllData = clearAllData;
-
-function switchTab(tabName) {
-    state.activeTab = tabName;
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-
-    document.querySelector(`.tab[onclick*="${tabName}"]`)?.classList.add('active');
-    document.getElementById(`tab-${tabName}`)?.classList.add('active');
-
-    // Update content based on tab
-    if (tabName === 'insights') {
-        updateInsights();
-    } else if (tabName === 'ranking') {
-        updateRanking();
-    }
-}
-
-function searchTable() {
-    const search = document.getElementById('tableSearch')?.value?.toLowerCase() || '';
-    
-    state.displayData = state.filteredData.filter(r => {
-        if (!search) return true;
-        return (r["ПІБ кур'єра"] || '').toLowerCase().includes(search) ||
-               (r['Номер авто'] || '').toLowerCase().includes(search);
-    });
-    
-    state.currentPage = 1;
-    renderTable();
-}
-
-function renderTable() {
-    const tbody = document.getElementById('tableBody');
-    if (!tbody) return;
-    
-    tbody.innerHTML = '';
-
-    if (state.displayData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 20px; color: var(--text-light)">Даних не знайдено</td></tr>';
-        updatePaginationInfo(0);
-        return;
-    }
-
-    const start = (state.currentPage - 1) * state.rowsPerPage;
-    const end = start + state.rowsPerPage;
-    const pageItems = state.displayData.slice(start, end);
-
-    pageItems.forEach(row => {
-        const rate = row._loaded > 0 ? (row._delivered / row._loaded * 100) : 0;
-        const badgeClass = helpers.getRateBadgeClass(rate);
-        
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${helpers.formatDate(row._dateObj)}</td>
-            <td style="font-weight: 500">${row["ПІБ кур'єра"]}</td>
-            <td>${row['Номер авто']}</td>
-            <td>${row['Підрозділ відомості']}</td>
-            <td>${row._loaded}</td>
-            <td>${row._delivered}</td>
-            <td><span class="badge ${badgeClass}">${helpers.formatPercent(rate)}</span></td>
-        `;
-        tbody.appendChild(tr);
-    });
-
-    updatePaginationInfo(state.displayData.length);
-}
-
-function updatePaginationInfo(totalItems) {
-    const btnPrev = document.getElementById('btnPrev');
-    const btnNext = document.getElementById('btnNext');
-    const pageInfo = document.getElementById('pageInfo');
-    
-    if (!pageInfo) return;
-
-    if (totalItems === 0) {
-        pageInfo.textContent = 'Немає записів';
-        if (btnPrev) btnPrev.disabled = true;
-        if (btnNext) btnNext.disabled = true;
-        return;
-    }
-
-    const start = (state.currentPage - 1) * state.rowsPerPage + 1;
-    const end = Math.min(start + state.rowsPerPage - 1, totalItems);
-
-    pageInfo.textContent = `Показано ${start}-${end} з ${totalItems}`;
-    
-    if (btnPrev) btnPrev.disabled = state.currentPage === 1;
-    if (btnNext) btnNext.disabled = end >= totalItems;
-}
-
-// Sort State
-let sortDir = 1;
-let lastCol = -1;
-
-function sortTable(n, type) {
-    if (lastCol === n) { sortDir *= -1; } 
-    else { sortDir = 1; lastCol = n; }
-
-    // Update icons
-    document.querySelectorAll('th i').forEach(i => i.className = 'fas fa-sort');
-    const clickedHeaderIcon = document.querySelectorAll('th i')[n];
-    if (clickedHeaderIcon) {
-        clickedHeaderIcon.className = sortDir === 1 ? 'fas fa-sort-up' : 'fas fa-sort-down';
-    }
-
-    state.displayData.sort((a, b) => {
-        let x, y;
-
-        if (type === 'date') {
-            x = a._dateObj ? a._dateObj.getTime() : 0;
-            y = b._dateObj ? b._dateObj.getTime() : 0;
-        } else if (n === 4 || n === 5) { // Numbers loaded/delivered
-            // Get value directly by index or property
-            const key = n === 4 ? '_loaded' : '_delivered';
-            x = a[key]; y = b[key];
-        } else if (n === 6) { // Success rate
-            x = a._loaded > 0 ? a._delivered/a._loaded : 0;
-            y = b._loaded > 0 ? b._delivered/b._loaded : 0;
-        } else {
-            // String columns mapping
-            const keys = ["", "ПІБ кур'єра", "Номер авто", "Підрозділ відомості"];
-            x = (a[keys[n]] || '').toLowerCase();
-            y = (b[keys[n]] || '').toLowerCase();
-        }
-
-        if (x < y) return -1 * sortDir;
-        if (x > y) return 1 * sortDir;
-        return 0;
-    });
-
-    renderTable();
-}
-
-function changePage(delta) {
-    state.currentPage += delta;
-    renderTable();
-}
-
-function exportData() {
-    if (state.filteredData.length === 0) {
-        helpers.showToast('Немає даних для експорту', 'error');
-        return;
-    }
-    
-    const exportData = state.filteredData.map(d => ({
-        'Дата': helpers.formatDate(d._dateObj),
-        'Курʼєр': d["ПІБ кур'єра"],
-        'Авто': d['Номер авто'],
-        'Зона': d['Підрозділ відомості'],
-        'Завантажено': d._loaded,
-        'Доставлено': d._delivered,
-        'Успішність': helpers.formatPercent(helpers.calculateSuccessRate(d._loaded, d._delivered))
-    }));
-    
-    helpers.exportToExcel(exportData, `delivery_export_${helpers.formatDate(new Date(), 'iso')}.xlsx`);
-    helpers.showToast(`Експортовано ${exportData.length} записів`, 'success');
-}
-
-async function clearAllData() {
-    if (confirm('Ви впевнені, що хочете видалити ВСІ дані? Цю дію не можна скасувати.')) {
-        try {
-            if (state.useSupabase) {
-                // Wait for the clear operation to finish
-                await supabaseService.clearAllDeliveries();
-                helpers.showToast('Базу даних очищено', 'success');
-            } else {
-                localStorage.removeItem('deliveryDataV4');
-                helpers.showToast('Локальні дані очищено', 'success');
-            }
-            
-            // Reset state
-            state.allData = [];
-            state.filteredData = [];
-            state.displayData = [];
-            
-            // Reload page to refresh everything
-            setTimeout(() => location.reload(), 1000);
-            
-        } catch (error) {
-            console.error('Clear error:', error);
-            helpers.showToast('Помилка очищення: ' + error.message, 'error');
-        }
-    }
-}
