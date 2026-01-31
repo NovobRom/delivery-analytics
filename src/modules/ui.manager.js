@@ -153,31 +153,35 @@ class UIManager {
             return;
         }
 
+        // Display aggregated pickup metrics
+        // Future Python Backend: This data would come from /pickup-aggregates endpoint
+        const successRateClass = stats.successRate >= 90 ? 'up' : stats.successRate >= 70 ? '' : 'down';
+
         grid.innerHTML = `
             <div class="stat-card">
-                <span class="stat-label">Total Orders</span>
+                <span class="stat-label">Total Pickups</span>
                 <span class="stat-value">${helpers.formatNumber(stats.totalOrders)}</span>
-                <span class="stat-sub">Pickup documents</span>
+                <span class="stat-sub">Pickup operations</span>
             </div>
             <div class="stat-card">
-                <span class="stat-label">Shipments</span>
-                <span class="stat-value">${helpers.formatNumber(stats.totalShipments)}</span>
-                <span class="stat-sub">Total shipments</span>
+                <span class="stat-label">Successful</span>
+                <span class="stat-value">${helpers.formatNumber(stats.totalSuccessful || 0)}</span>
+                <span class="stat-sub ${successRateClass}"><i class="fas fa-check-circle"></i> ${helpers.formatPercent(stats.successRate || 0)} success</span>
             </div>
             <div class="stat-card">
                 <span class="stat-label">Total Weight</span>
                 <span class="stat-value">${stats.totalWeight.toFixed(1)} kg</span>
-                <span class="stat-sub">Actual weight</span>
+                <span class="stat-sub">Avg: ${(stats.avgWeightPerPickup || 0).toFixed(2)} kg/pickup</span>
             </div>
             <div class="stat-card">
                 <span class="stat-label">Revenue</span>
                 <span class="stat-value">${helpers.formatNumber(stats.totalRevenue)}</span>
-                <span class="stat-sub up"><i class="fas fa-coins"></i> Total</span>
+                <span class="stat-sub up"><i class="fas fa-coins"></i> Avg: ${(stats.avgCostPerPickup || 0).toFixed(2)}</span>
             </div>
             <div class="stat-card">
-                <span class="stat-label">Countries</span>
-                <span class="stat-value">${stats.uniqueCountries}</span>
-                <span class="stat-sub">Unique destinations</span>
+                <span class="stat-label">Active Couriers</span>
+                <span class="stat-value">${stats.uniqueCouriers || stats.uniqueCountries || 0}</span>
+                <span class="stat-sub">In this period</span>
             </div>
         `;
     }
@@ -273,37 +277,82 @@ class UIManager {
 
         if (!stats) return ['No data available'];
 
-        // Revenue insight
-        if (stats.totalRevenue > 0) {
-            const avgRevenue = stats.totalRevenue / stats.totalOrders;
-            insights.push(`Average order value: ${avgRevenue.toFixed(2)}`);
+        // Check if data is aggregated
+        const isAggregated = data[0]?.total_pickups !== undefined;
+
+        if (isAggregated) {
+            // Insights for aggregated data
+            // Success rate insight
+            if (stats.successRate >= 90) {
+                insights.push(`Excellent pickup success rate: ${stats.successRate.toFixed(1)}%`);
+            } else if (stats.successRate >= 70) {
+                insights.push(`Good pickup success rate: ${stats.successRate.toFixed(1)}% (target: 90%)`);
+            } else {
+                insights.push(`Warning: Pickup success rate ${stats.successRate.toFixed(1)}% is below target (90%)`);
+            }
+
+            // Best courier
+            const courierStats = {};
+            data.forEach(d => {
+                const name = d.courier_name || 'Unknown';
+                if (!courierStats[name]) courierStats[name] = { total: 0, successful: 0 };
+                courierStats[name].total += d.total_pickups || 0;
+                courierStats[name].successful += d.success_count || 0;
+            });
+
+            let bestCourier = { name: '', rate: 0 };
+            Object.entries(courierStats).forEach(([name, s]) => {
+                if (s.total < 10) return; // Skip couriers with < 10 pickups
+                const rate = s.total > 0 ? (s.successful / s.total * 100) : 0;
+                if (rate > bestCourier.rate) bestCourier = { name, rate };
+            });
+
+            if (bestCourier.name) {
+                insights.push(`Top performer: ${bestCourier.name} (${bestCourier.rate.toFixed(1)}%)`);
+            }
+
+            // Average metrics
+            if (stats.avgWeightPerPickup > 0) {
+                insights.push(`Average weight: ${stats.avgWeightPerPickup.toFixed(2)} kg per pickup`);
+            }
+
+            if (stats.avgCostPerPickup > 0) {
+                insights.push(`Average revenue: ${stats.avgCostPerPickup.toFixed(2)} per pickup`);
+            }
+
+        } else {
+            // Legacy insights for raw data
+            if (stats.totalRevenue > 0) {
+                const avgRevenue = stats.totalRevenue / stats.totalOrders;
+                insights.push(`Average order value: ${avgRevenue.toFixed(2)}`);
+            }
+
+            if (stats.totalWeight > 0) {
+                const avgWeight = stats.totalWeight / stats.totalOrders;
+                insights.push(`Average weight: ${avgWeight.toFixed(2)} kg per order`);
+            }
+
+            const countryStats = {};
+            data.forEach(d => {
+                const country = d.recipient_country || 'Unknown';
+                if (!countryStats[country]) countryStats[country] = 0;
+                countryStats[country]++;
+            });
+
+            const topCountry = Object.entries(countryStats)
+                .sort((a, b) => b[1] - a[1])[0];
+
+            if (topCountry) {
+                const percentage = (topCountry[1] / stats.totalOrders * 100).toFixed(1);
+                insights.push(`Top destination: ${topCountry[0]} (${percentage}% of orders)`);
+            }
+
+            if (stats.uniqueCountries) {
+                insights.push(`Active countries: ${stats.uniqueCountries}`);
+            }
         }
 
-        // Weight insight
-        if (stats.totalWeight > 0) {
-            const avgWeight = stats.totalWeight / stats.totalOrders;
-            insights.push(`Average weight: ${avgWeight.toFixed(2)} kg per order`);
-        }
-
-        // Top country
-        const countryStats = {};
-        data.forEach(d => {
-            const country = d.recipient_country || 'Unknown';
-            if (!countryStats[country]) countryStats[country] = 0;
-            countryStats[country]++;
-        });
-
-        const topCountry = Object.entries(countryStats)
-            .sort((a, b) => b[1] - a[1])[0];
-
-        if (topCountry) {
-            const percentage = (topCountry[1] / stats.totalOrders * 100).toFixed(1);
-            insights.push(`Top destination: ${topCountry[0]} (${percentage}% of orders)`);
-        }
-
-        insights.push(`Active countries: ${stats.uniqueCountries}`);
-
-        return insights;
+        return insights.length > 0 ? insights : ['All metrics are normal'];
     }
 
     renderInsights(container, insights) {

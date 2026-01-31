@@ -240,23 +240,48 @@ class Store {
         const data = this.pickupData.filtered;
         if (!data.length) return null;
 
-        const totalOrders = data.length;
-        const totalShipments = data.reduce((sum, d) => sum + (d.shipments_in_doc || 1), 0);
-        const totalWeight = data.reduce((sum, d) => sum + (d.actual_weight || 0), 0);
-        const totalRevenue = data.reduce((sum, d) => sum + (d.delivery_cost || 0), 0);
+        // Check if data is aggregated (has total_pickups field) or raw
+        const isAggregated = data[0]?.total_pickups !== undefined;
 
-        const countries = new Set([
-            ...data.map(d => d.sender_country).filter(Boolean),
-            ...data.map(d => d.recipient_country).filter(Boolean)
-        ]);
+        if (isAggregated) {
+            // Handle aggregated pickup data (courier-day summaries)
+            const totalPickups = data.reduce((sum, d) => sum + (d.total_pickups || 0), 0);
+            const totalSuccessful = data.reduce((sum, d) => sum + (d.success_count || 0), 0);
+            const totalWeight = data.reduce((sum, d) => sum + (d.total_weight || 0), 0);
+            const totalRevenue = data.reduce((sum, d) => sum + (d.total_cost || 0), 0);
+            const uniqueCouriers = new Set(data.map(d => d.courier_name).filter(Boolean)).size;
 
-        return {
-            totalOrders,
-            totalShipments,
-            totalWeight,
-            totalRevenue,
-            uniqueCountries: countries.size
-        };
+            return {
+                totalOrders: totalPickups,
+                totalSuccessful,
+                successRate: totalPickups > 0 ? (totalSuccessful / totalPickups * 100) : 0,
+                totalWeight,
+                totalRevenue,
+                uniqueCouriers,
+                recordsCount: data.length,
+                avgCostPerPickup: totalPickups > 0 ? totalRevenue / totalPickups : 0,
+                avgWeightPerPickup: totalPickups > 0 ? totalWeight / totalPickups : 0
+            };
+        } else {
+            // Handle raw pickup data (legacy support)
+            const totalOrders = data.length;
+            const totalShipments = data.reduce((sum, d) => sum + (d.shipments_in_doc || 1), 0);
+            const totalWeight = data.reduce((sum, d) => sum + (d.actual_weight || 0), 0);
+            const totalRevenue = data.reduce((sum, d) => sum + (d.delivery_cost || 0), 0);
+
+            const countries = new Set([
+                ...data.map(d => d.sender_country).filter(Boolean),
+                ...data.map(d => d.recipient_country).filter(Boolean)
+            ]);
+
+            return {
+                totalOrders,
+                totalShipments,
+                totalWeight,
+                totalRevenue,
+                uniqueCountries: countries.size
+            };
+        }
     }
 
     // ==========================================

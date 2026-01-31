@@ -2,6 +2,40 @@
 // Delivery Analytics Pro v2.0
 // Main Application Entry Point
 // =============================================
+//
+// PYTHON BACKEND MIGRATION STRATEGY:
+// ===================================
+// This application currently parses Excel files client-side and stores data locally.
+// For production deployment with Python FastAPI backend:
+//
+// 1. DATA INGESTION:
+//    - Replace handleFileUpload() with API call to POST /api/upload
+//    - Backend will handle Excel parsing using openpyxl or pandas
+//    - Backend will validate data and store in PostgreSQL/Supabase
+//
+// 2. DATA AGGREGATION:
+//    - Pickup data aggregation (currently in excel-parser.service.js)
+//      should move to backend SQL queries
+//    - Create endpoint: GET /api/pickup-aggregates
+//      Query: SELECT courier_name, execution_date, COUNT(*) as total_pickups,
+//             SUM(actual_weight) as total_weight, COUNT(CASE WHEN status='Done' THEN 1 END)
+//             FROM pickup_orders GROUP BY courier_name, execution_date
+//
+// 3. DATA RETRIEVAL:
+//    - Replace loadDeliveryData() with: GET /api/deliveries?filter=...
+//    - Replace loadPickupData() with: GET /api/pickups?filter=...
+//    - Backend handles filtering, pagination, sorting
+//
+// 4. STATISTICS:
+//    - Replace store.getDeliveryStats() with: GET /api/stats/delivery
+//    - Replace store.getPickupStats() with: GET /api/stats/pickup
+//    - Backend calculates stats using SQL aggregations
+//
+// 5. DATA SCHEMA (for Python models):
+//    See models defined in excel-parser.service.js parseDeliveryRow() and parsePickupRow()
+//    These map directly to SQLAlchemy/Pydantic models
+//
+// =============================================
 
 import dataService from './services/supabase.service.js';
 import excelParser from './services/excel-parser.service.js';
@@ -147,6 +181,26 @@ async function loadPickupData() {
 
 // =============================================
 // File Upload
+// =============================================
+// Future Python Backend Integration Point:
+// Replace the entire client-side parsing logic below with:
+//
+// async function handleFileUpload(event) {
+//     const formData = new FormData();
+//     for (const file of event.target.files) {
+//         formData.append('files', file);
+//     }
+//
+//     const response = await fetch('/api/upload', {
+//         method: 'POST',
+//         body: formData
+//     });
+//
+//     const result = await response.json();
+//     // Backend returns: { fileType, recordsProcessed, errors, warnings }
+//     // Then reload data from backend
+//     await loadData();
+// }
 // =============================================
 
 async function handleFileUpload(event) {

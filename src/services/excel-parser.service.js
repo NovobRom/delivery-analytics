@@ -444,18 +444,125 @@ class ExcelParserService {
             }
         });
 
+        // CRITICAL: Aggregate pickup data (raw transactions -> daily summaries)
+        // Future Python Backend: This aggregation would be handled server-side in a /pickup-aggregates endpoint
+        let finalRecords = records;
+        if (fileType === FILE_TYPES.PICKUP) {
+            finalRecords = this.aggregatePickupData(records);
+            console.log(`Aggregated ${records.length} pickup rows into ${finalRecords.length} daily summaries`);
+        }
+
         return {
             fileType,
-            records,
+            records: finalRecords,
+            rawRecords: fileType === FILE_TYPES.PICKUP ? records : undefined,
             errors,
             warnings,
             stats: {
                 total: jsonData.length,
-                processed: records.length,
+                processed: finalRecords.length,
+                rawCount: fileType === FILE_TYPES.PICKUP ? records.length : undefined,
                 errorsCount: errors.length,
                 warningsCount: warnings.length
             }
         };
+    }
+
+    // ==========================================
+    // PICKUP DATA AGGREGATION
+    // ==========================================
+
+    /**
+     * Aggregates raw pickup transaction data into daily summaries by courier
+     *
+     * Input: Raw pickup rows (one per shipment)
+     * Output: Aggregated rows (one per courier per day)
+     *
+     * Metrics calculated:
+     * - Total pickups count
+     * - Total weight (sum of actual_weight)
+     * - Success count (where pickup_status indicates completion)
+     * - Success rate (percentage)
+     *
+     * Future Python Backend: Replace this with API call to /pickup-aggregates
+     * The backend would use SQL GROUP BY for better performance:
+     * SELECT
+     *   courier_name,
+     *   execution_date,
+     *   COUNT(*) as total_pickups,
+     *   SUM(actual_weight) as total_weight,
+     *   COUNT(CASE WHEN pickup_status IN ('Done', 'Закрито', 'Виконано') THEN 1 END) as success_count
+     * FROM pickup_orders
+     * GROUP BY courier_name, execution_date
+     */
+    aggregatePickupData(rawRecords) {
+        // Group by courier name and date
+        const groups = {};
+
+        rawRecords.forEach(record => {
+            const courier = record.courier_name || 'Unknown';
+            const date = record.execution_date || record.shipment_created_date || 'Unknown';
+
+            // Create composite key
+            const key = `${courier}|${date}`;
+
+            if (!groups[key]) {
+                groups[key] = {
+                    courier_name: courier,
+                    execution_date: date,
+                    pickups: [],
+                    total_pickups: 0,
+                    total_weight: 0,
+                    total_pieces: 0,
+                    success_count: 0,
+                    total_cost: 0
+                };
+            }
+
+            // Add to group
+            groups[key].pickups.push(record);
+            groups[key].total_pickups++;
+            groups[key].total_weight += record.actual_weight || 0;
+            groups[key].total_pieces += record.places_count || 0;
+            groups[key].total_cost += record.delivery_cost || 0;
+
+            // Check if pickup was successful
+            // Success statuses: "Done", "Закрито", "Виконано", "Closed", "Completed"
+            const status = (record.pickup_status || '').toLowerCase();
+            const isSuccess = status.includes('done') ||
+                            status.includes('закрито') ||
+                            status.includes('виконано') ||
+                            status.includes('closed') ||
+                            status.includes('completed');
+
+            if (isSuccess) {
+                groups[key].success_count++;
+            }
+        });
+
+        // Convert groups to array and calculate rates
+        const aggregated = Object.values(groups).map(group => {
+            const successRate = group.total_pickups > 0
+                ? (group.success_count / group.total_pickups * 100)
+                : 0;
+
+            return {
+                courier_name: group.courier_name,
+                execution_date: group.execution_date,
+                total_pickups: group.total_pickups,
+                total_weight: group.total_weight,
+                total_pieces: group.total_pieces,
+                success_count: group.success_count,
+                success_rate: successRate,
+                total_cost: group.total_cost,
+                avg_cost_per_pickup: group.total_pickups > 0 ? group.total_cost / group.total_pickups : 0,
+                avg_weight_per_pickup: group.total_pickups > 0 ? group.total_weight / group.total_pickups : 0,
+                // Store raw records for drill-down (optional)
+                _rawRecords: group.pickups
+            };
+        });
+
+        return aggregated;
     }
 
     // ==========================================

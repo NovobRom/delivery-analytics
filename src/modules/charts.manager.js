@@ -250,11 +250,190 @@ class ChartsManager {
         const data = store.pickupData.filtered;
         if (!data || data.length === 0) return;
 
-        this.renderCountryChart(data);
-        this.renderRevenueChart(data);
-        this.renderStatusChart(data);
-        this.renderWeightChart(data);
+        // Check if data is aggregated or raw
+        const isAggregated = data[0]?.total_pickups !== undefined;
+
+        if (isAggregated) {
+            // Render charts for aggregated pickup data
+            this.renderPickupCourierChart(data);
+            this.renderPickupWeightChart(data);
+            this.renderPickupSuccessChart(data);
+            this.renderPickupTrendChart(data);
+        } else {
+            // Legacy: render charts for raw pickup data
+            this.renderCountryChart(data);
+            this.renderRevenueChart(data);
+            this.renderStatusChart(data);
+            this.renderWeightChart(data);
+        }
     }
+
+    // ==========================================
+    // Pickup Charts (Aggregated Data)
+    // Future Python Backend: These would use data from /pickup-aggregates endpoint
+    // ==========================================
+
+    renderPickupCourierChart(data) {
+        const ctx = this.getContext('countryChart'); // Reuse canvas
+        if (!ctx) return;
+
+        // Aggregate by courier
+        const courierStats = {};
+        data.forEach(d => {
+            const courier = d.courier_name || 'Unknown';
+            if (!courierStats[courier]) courierStats[courier] = { total: 0, successful: 0 };
+            courierStats[courier].total += d.total_pickups || 0;
+            courierStats[courier].successful += d.success_count || 0;
+        });
+
+        // Calculate success rates
+        const sorted = Object.entries(courierStats)
+            .map(([courier, stats]) => ({
+                courier,
+                total: stats.total,
+                rate: stats.total > 0 ? (stats.successful / stats.total * 100) : 0
+            }))
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 10);
+
+        store.setChart('country', new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: sorted.map(s => s.courier),
+                datasets: [{
+                    label: 'Total Pickups',
+                    data: sorted.map(s => s.total),
+                    backgroundColor: this.colors.primary,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                ...this.defaultOptions,
+                indexAxis: 'y',
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    title: {
+                        display: true,
+                        text: 'Pickups by Courier (Top 10)'
+                    }
+                }
+            }
+        }));
+    }
+
+    renderPickupWeightChart(data) {
+        const ctx = this.getContext('weightChart');
+        if (!ctx) return;
+
+        // Group by date
+        const weightByDate = {};
+        data.forEach(d => {
+            const date = d.execution_date || 'Unknown';
+            if (!weightByDate[date]) weightByDate[date] = 0;
+            weightByDate[date] += d.total_weight || 0;
+        });
+
+        const labels = Object.keys(weightByDate).sort();
+
+        store.setChart('weight', new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels.map(d => this.formatDate(d)),
+                datasets: [{
+                    label: 'Total Weight (kg)',
+                    data: labels.map(d => weightByDate[d]),
+                    backgroundColor: this.colors.primary,
+                    borderRadius: 4
+                }]
+            },
+            options: this.defaultOptions
+        }));
+    }
+
+    renderPickupSuccessChart(data) {
+        const ctx = this.getContext('statusChart');
+        if (!ctx) return;
+
+        // Calculate success rate buckets
+        const buckets = { '<70%': 0, '70-90%': 0, '>90%': 0 };
+
+        data.forEach(d => {
+            const rate = d.success_rate || 0;
+            if (rate < 70) buckets['<70%']++;
+            else if (rate < 90) buckets['70-90%']++;
+            else buckets['>90%']++;
+        });
+
+        store.setChart('status', new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['< 70%', '70% - 90%', '> 90%'],
+                datasets: [{
+                    data: [buckets['<70%'], buckets['70-90%'], buckets['>90%']],
+                    backgroundColor: [this.colors.danger, this.colors.warning, this.colors.success],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                ...this.defaultOptions,
+                cutout: '60%',
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    legend: { position: 'right' },
+                    title: {
+                        display: true,
+                        text: 'Success Rate Distribution'
+                    }
+                }
+            }
+        }));
+    }
+
+    renderPickupTrendChart(data) {
+        const ctx = this.getContext('revenueChart');
+        if (!ctx) return;
+
+        // Group by date and calculate daily success rate
+        const dateStats = {};
+        data.forEach(d => {
+            const date = d.execution_date || 'Unknown';
+            if (!dateStats[date]) dateStats[date] = { total: 0, successful: 0 };
+            dateStats[date].total += d.total_pickups || 0;
+            dateStats[date].successful += d.success_count || 0;
+        });
+
+        const labels = Object.keys(dateStats).sort();
+        const rates = labels.map(d => {
+            const stats = dateStats[d];
+            return stats.total > 0 ? (stats.successful / stats.total * 100) : 0;
+        });
+
+        store.setChart('revenue', new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels.map(d => this.formatDate(d)),
+                datasets: [{
+                    label: 'Success Rate (%)',
+                    data: rates,
+                    borderColor: this.colors.success,
+                    backgroundColor: this.colors.successLight,
+                    fill: true,
+                    tension: 0.3,
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                ...this.defaultOptions,
+                scales: {
+                    y: { beginAtZero: false, max: 100 }
+                }
+            }
+        }));
+    }
+
+    // ==========================================
+    // Legacy Pickup Charts (Raw Data)
+    // ==========================================
 
     renderCountryChart(data) {
         const ctx = this.getContext('countryChart');
