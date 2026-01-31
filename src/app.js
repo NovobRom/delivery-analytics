@@ -22,6 +22,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize UI manager
     uiManager.init();
 
+    // Create settings modal
+    createSettingsModal();
+
     // Check connection
     await checkConnection();
 
@@ -33,6 +36,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Update version display
     updateVersion();
+
+    // Set initial UI state
+    updateDataTypeUI();
 
     console.log('✅ Application ready');
 });
@@ -62,6 +68,117 @@ async function checkConnection() {
 function updateVersion() {
     const badge = document.getElementById('appVersion');
     if (badge) badge.textContent = 'v2.0.0';
+}
+
+// =============================================
+// Settings Modal
+// =============================================
+
+function createSettingsModal() {
+    // Check if modal already exists
+    if (document.getElementById('settingsModal')) return;
+
+    const modalHTML = `
+        <div id="settingsModal" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2><i class="fas fa-cog"></i> Database Settings</h2>
+                    <button class="modal-close" onclick="closeSettings()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="supabaseUrl">Supabase URL</label>
+                        <input type="text" id="supabaseUrl" placeholder="https://your-project.supabase.co">
+                        <div class="form-hint">Find this in your Supabase project settings</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="supabaseKey">Supabase Anon Key</label>
+                        <input type="password" id="supabaseKey" placeholder="eyJhbGciOiJIUzI1NiIs...">
+                        <div class="form-hint">Use the anon/public key, not the service key</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="backendUrl">Backend API URL (optional)</label>
+                        <input type="text" id="backendUrl" placeholder="http://localhost:8000">
+                        <div class="form-hint">Leave empty to connect directly to Supabase</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" onclick="closeSettings()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        <i class="fas fa-save"></i> Save & Connect
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+    // Load existing settings
+    loadSettingsToForm();
+}
+
+function openSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) {
+        loadSettingsToForm();
+        modal.classList.add('show');
+    }
+}
+
+function closeSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) {
+        modal.classList.remove('show');
+    }
+}
+
+function loadSettingsToForm() {
+    const settings = helpers.loadFromStorage('supabaseSettings') || {};
+
+    const urlInput = document.getElementById('supabaseUrl');
+    const keyInput = document.getElementById('supabaseKey');
+    const backendInput = document.getElementById('backendUrl');
+
+    if (urlInput) urlInput.value = settings.url || '';
+    if (keyInput) keyInput.value = settings.key || '';
+    if (backendInput) backendInput.value = settings.backendUrl || '';
+}
+
+async function saveSettings() {
+    const url = document.getElementById('supabaseUrl')?.value.trim();
+    const key = document.getElementById('supabaseKey')?.value.trim();
+    const backendUrl = document.getElementById('backendUrl')?.value.trim();
+
+    // Save to localStorage
+    const settings = { url, key, backendUrl };
+    helpers.saveToStorage('supabaseSettings', settings);
+
+    // Update dataService with new credentials
+    if (url && key) {
+        dataService.url = url;
+        dataService.key = key;
+        dataService.headers = {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+        };
+    }
+
+    // Close modal
+    closeSettings();
+
+    // Re-check connection
+    helpers.showToast('Testing connection...', 'info');
+    await checkConnection();
+
+    if (store.useSupabase) {
+        helpers.showToast('Connected to database!', 'success');
+        await loadData();
+    } else {
+        helpers.showToast('Could not connect. Check your credentials.', 'warning');
+    }
 }
 
 // =============================================
@@ -127,64 +244,92 @@ async function loadPickupData() {
 }
 
 // =============================================
-// File Upload
+// File Upload (supports multiple files)
 // =============================================
 
 async function handleFileUpload(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
     uiManager.showLoading(true);
 
+    let totalProcessed = 0;
+    let totalErrors = 0;
+
     try {
-        // Parse the file (auto-detects type)
-        const result = await excelParser.parseFile(file);
-
-        console.log(`📁 File type detected: ${result.fileType}`);
-        console.log(`📊 Records parsed: ${result.stats.processed}`);
-
-        // Show warnings/errors
-        if (result.warnings.length > 0) {
-            uiManager.showAlerts(result.warnings, 'warning');
-        }
-        if (result.errors.length > 0) {
-            uiManager.showAlerts(result.errors, 'error');
-        }
-
-        if (result.records.length === 0) {
-            helpers.showToast('No valid records found', 'error');
-            return;
-        }
-
-        // Switch to correct data type
-        if (result.fileType !== store.activeDataType) {
-            store.setActiveDataType(result.fileType);
-            updateDataTypeUI();
-        }
-
-        // Save data
-        if (result.fileType === FILE_TYPES.DELIVERY) {
-            await saveDeliveryData(result.records, result.filename);
-        } else {
-            await savePickupData(result.records, result.filename);
+        // Process each file
+        for (const file of files) {
+            try {
+                const result = await processFile(file);
+                totalProcessed += result.processed;
+                totalErrors += result.errors;
+            } catch (err) {
+                console.error(`Error processing ${file.name}:`, err);
+                totalErrors++;
+            }
         }
 
         // Reload and update UI
         await loadData();
 
-        const typeLabel = result.fileType === FILE_TYPES.DELIVERY ? 'delivery' : 'pickup';
-        helpers.showToast(
-            `Imported ${result.records.length} ${typeLabel} records`,
-            result.errors.length > 0 ? 'warning' : 'success'
-        );
+        // Show summary
+        if (files.length > 1) {
+            helpers.showToast(
+                `Processed ${files.length} files: ${totalProcessed} records imported`,
+                totalErrors > 0 ? 'warning' : 'success'
+            );
+        }
 
     } catch (error) {
         console.error('Upload error:', error);
-        helpers.showToast('Error processing file: ' + error.message, 'error');
+        helpers.showToast('Error processing files: ' + error.message, 'error');
     } finally {
         uiManager.showLoading(false);
         event.target.value = '';
     }
+}
+
+async function processFile(file) {
+    console.log(`📁 Processing: ${file.name}`);
+
+    // Parse the file (auto-detects type)
+    const result = await excelParser.parseFile(file);
+
+    console.log(`📊 File type: ${result.fileType}, Records: ${result.stats.processed}`);
+
+    // Show warnings/errors
+    if (result.warnings.length > 0) {
+        uiManager.showAlerts(result.warnings.slice(0, 5), 'warning');
+    }
+    if (result.errors.length > 0) {
+        uiManager.showAlerts(result.errors.slice(0, 5), 'error');
+    }
+
+    if (result.records.length === 0) {
+        helpers.showToast(`${file.name}: No valid records found`, 'error');
+        return { processed: 0, errors: 1 };
+    }
+
+    // Switch to correct data type if needed
+    if (result.fileType !== store.activeDataType) {
+        store.setActiveDataType(result.fileType);
+        updateDataTypeUI();
+    }
+
+    // Save data
+    if (result.fileType === FILE_TYPES.DELIVERY) {
+        await saveDeliveryData(result.records, result.filename);
+    } else {
+        await savePickupData(result.records, result.filename);
+    }
+
+    const typeLabel = result.fileType === FILE_TYPES.DELIVERY ? 'delivery' : 'pickup';
+    helpers.showToast(
+        `${file.name}: ${result.records.length} ${typeLabel} records imported`,
+        result.errors.length > 0 ? 'warning' : 'success'
+    );
+
+    return { processed: result.records.length, errors: result.errors.length };
 }
 
 async function saveDeliveryData(records, filename) {
@@ -375,11 +520,25 @@ function updateDataTypeUI() {
         btn.classList.toggle('active', btn.dataset.type === store.activeDataType);
     });
 
+    // Show/hide chart grids
+    const deliveryCharts = document.getElementById('deliveryCharts');
+    const pickupCharts = document.getElementById('pickupCharts');
+
+    if (deliveryCharts && pickupCharts) {
+        if (store.isDeliveryMode()) {
+            deliveryCharts.style.display = 'grid';
+            pickupCharts.style.display = 'none';
+        } else {
+            deliveryCharts.style.display = 'none';
+            pickupCharts.style.display = 'grid';
+        }
+    }
+
     // Update table headers
     updateTableHeaders();
 
     // Update filter labels
-    const zoneLabel = document.querySelector('label[for="filterZone"]');
+    const zoneLabel = document.getElementById('zoneFilterLabel');
     if (zoneLabel) {
         zoneLabel.textContent = store.isDeliveryMode() ? 'Department' : 'Country';
     }
@@ -388,6 +547,40 @@ function updateDataTypeUI() {
     const courierGroup = document.getElementById('courierFilterGroup');
     if (courierGroup) {
         courierGroup.style.display = store.isDeliveryMode() ? 'flex' : 'none';
+    }
+
+    // Update ranking title
+    const rankingTitle = document.getElementById('rankingTitle');
+    if (rankingTitle) {
+        rankingTitle.textContent = store.isDeliveryMode() ? 'Top 10 Couriers' : 'Top 10 Orders';
+    }
+
+    // Update ranking table headers
+    const rankingHead = document.getElementById('rankingHead');
+    if (rankingHead) {
+        if (store.isDeliveryMode()) {
+            rankingHead.innerHTML = `
+                <tr>
+                    <th>Rank</th>
+                    <th>Courier</th>
+                    <th>Vehicle</th>
+                    <th>Loaded</th>
+                    <th>Delivered</th>
+                    <th>Success</th>
+                </tr>
+            `;
+        } else {
+            rankingHead.innerHTML = `
+                <tr>
+                    <th>Rank</th>
+                    <th>Document</th>
+                    <th>Country</th>
+                    <th>Weight</th>
+                    <th>Cost</th>
+                    <th>Status</th>
+                </tr>
+            `;
+        }
     }
 }
 
@@ -449,6 +642,13 @@ function initializeEventListeners() {
             switchDataType(btn.dataset.type);
         });
     });
+
+    // Connection status click to open settings
+    const connectionStatus = document.getElementById('connectionStatus');
+    if (connectionStatus) {
+        connectionStatus.addEventListener('click', openSettings);
+        connectionStatus.title = 'Click to configure database connection';
+    }
 }
 
 // =============================================
@@ -554,3 +754,6 @@ window.sortTable = (col, type) => tablesManager.sort(col, type);
 window.changePage = (delta) => tablesManager.changePage(delta);
 window.exportData = exportData;
 window.clearAllData = clearAllData;
+window.openSettings = openSettings;
+window.closeSettings = closeSettings;
+window.saveSettings = saveSettings;

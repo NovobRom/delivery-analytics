@@ -6,19 +6,41 @@
 import apiService from './api.service.js';
 import { FILE_TYPES, API_ENDPOINTS } from '../utils/constants.js';
 
+// Try to load settings from localStorage first
+function loadStoredSettings() {
+    try {
+        const stored = localStorage.getItem('supabaseSettings');
+        if (stored) {
+            return JSON.parse(stored);
+        }
+    } catch (e) {
+        console.log('Could not load stored settings');
+    }
+    return null;
+}
+
 // Dynamic config loading with fallback
 let SUPABASE_URL = '';
 let SUPABASE_ANON_KEY = '';
 
-// Try to load config (will fail on GitHub Pages if file not present)
-try {
-    const config = await import('../config/supabase.js').catch(() => null);
-    if (config) {
-        SUPABASE_URL = config.SUPABASE_URL || '';
-        SUPABASE_ANON_KEY = config.SUPABASE_ANON_KEY || '';
+// First try localStorage settings
+const storedSettings = loadStoredSettings();
+if (storedSettings && storedSettings.url && storedSettings.key) {
+    SUPABASE_URL = storedSettings.url;
+    SUPABASE_ANON_KEY = storedSettings.key;
+    console.log('✅ Loaded Supabase settings from localStorage');
+} else {
+    // Then try to load config file (will fail on GitHub Pages if file not present)
+    try {
+        const config = await import('../config/supabase.js').catch(() => null);
+        if (config) {
+            SUPABASE_URL = config.SUPABASE_URL || '';
+            SUPABASE_ANON_KEY = config.SUPABASE_ANON_KEY || '';
+            console.log('✅ Loaded Supabase settings from config file');
+        }
+    } catch (e) {
+        console.log('ℹ️ Supabase config not found, using localStorage mode');
     }
-} catch (e) {
-    console.log('Supabase config not found, using localStorage mode');
 }
 
 class DataService {
@@ -41,8 +63,25 @@ class DataService {
      * Returns: 'api' | 'direct' | 'local'
      */
     async checkConnection() {
+        // Reload settings in case they changed
+        const storedSettings = loadStoredSettings();
+        if (storedSettings && storedSettings.url && storedSettings.key) {
+            this.url = storedSettings.url;
+            this.key = storedSettings.key;
+            this.headers = {
+                'apikey': this.key,
+                'Authorization': `Bearer ${this.key}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            };
+        }
+
         // First try Backend API
         try {
+            const backendUrl = storedSettings?.backendUrl;
+            if (backendUrl) {
+                apiService.baseUrl = backendUrl;
+            }
             await apiService.healthCheck();
             this.mode = 'api';
             console.log('✅ Connected to Backend API');
