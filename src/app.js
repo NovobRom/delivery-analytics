@@ -19,32 +19,32 @@ import { FILE_TYPES } from './utils/constants.js';
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚚 Delivery Analytics Pro v2.0 starting...');
 
-    // Initialize UI manager
-    uiManager.init();
+    try {
+        // Initialize UI manager
+        uiManager.init();
 
-    // Create settings modal
-    createSettingsModal();
+        // Check connection to Supabase
+        await checkConnection();
 
-    // Check connection
-    await checkConnection();
+        // Load initial data
+        await loadData();
 
-    // Load data
-    await loadData();
+        // Initialize event listeners
+        initializeEventListeners();
 
-    // Initialize event listeners
-    initializeEventListeners();
+        // Update UI
+        updateVersion();
+        updateDataTypeUI();
 
-    // Update version display
-    updateVersion();
-
-    // Set initial UI state
-    updateDataTypeUI();
-
-    console.log('✅ Application ready');
+        console.log('✅ Application ready');
+    } catch (error) {
+        console.error('❌ Initialization error:', error);
+        helpers.showToast('Error loading application', 'error');
+    }
 });
 
 /**
- * Check connection to backend/database
+ * Check connection to Supabase
  */
 async function checkConnection() {
     uiManager.showLoading(true);
@@ -53,6 +53,7 @@ async function checkConnection() {
         const connectionType = await dataService.checkConnection();
         store.setConnection(connectionType, connectionType !== 'local');
         uiManager.updateConnectionStatus(connectionType);
+        console.log('Connection type:', connectionType);
     } catch (error) {
         console.error('Connection check failed:', error);
         store.setConnection('local', false);
@@ -68,117 +69,6 @@ async function checkConnection() {
 function updateVersion() {
     const badge = document.getElementById('appVersion');
     if (badge) badge.textContent = 'v2.0.0';
-}
-
-// =============================================
-// Settings Modal
-// =============================================
-
-function createSettingsModal() {
-    // Check if modal already exists
-    if (document.getElementById('settingsModal')) return;
-
-    const modalHTML = `
-        <div id="settingsModal" class="modal-overlay">
-            <div class="modal">
-                <div class="modal-header">
-                    <h2><i class="fas fa-cog"></i> Database Settings</h2>
-                    <button class="modal-close" onclick="closeSettings()">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="supabaseUrl">Supabase URL</label>
-                        <input type="text" id="supabaseUrl" placeholder="https://your-project.supabase.co">
-                        <div class="form-hint">Find this in your Supabase project settings</div>
-                    </div>
-                    <div class="form-group">
-                        <label for="supabaseKey">Supabase Anon Key</label>
-                        <input type="password" id="supabaseKey" placeholder="eyJhbGciOiJIUzI1NiIs...">
-                        <div class="form-hint">Use the anon/public key, not the service key</div>
-                    </div>
-                    <div class="form-group">
-                        <label for="backendUrl">Backend API URL (optional)</label>
-                        <input type="text" id="backendUrl" placeholder="http://localhost:8000">
-                        <div class="form-hint">Leave empty to connect directly to Supabase</div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-outline" onclick="closeSettings()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveSettings()">
-                        <i class="fas fa-save"></i> Save & Connect
-                    </button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-    // Load existing settings
-    loadSettingsToForm();
-}
-
-function openSettings() {
-    const modal = document.getElementById('settingsModal');
-    if (modal) {
-        loadSettingsToForm();
-        modal.classList.add('show');
-    }
-}
-
-function closeSettings() {
-    const modal = document.getElementById('settingsModal');
-    if (modal) {
-        modal.classList.remove('show');
-    }
-}
-
-function loadSettingsToForm() {
-    const settings = helpers.loadFromStorage('supabaseSettings') || {};
-
-    const urlInput = document.getElementById('supabaseUrl');
-    const keyInput = document.getElementById('supabaseKey');
-    const backendInput = document.getElementById('backendUrl');
-
-    if (urlInput) urlInput.value = settings.url || '';
-    if (keyInput) keyInput.value = settings.key || '';
-    if (backendInput) backendInput.value = settings.backendUrl || '';
-}
-
-async function saveSettings() {
-    const url = document.getElementById('supabaseUrl')?.value.trim();
-    const key = document.getElementById('supabaseKey')?.value.trim();
-    const backendUrl = document.getElementById('backendUrl')?.value.trim();
-
-    // Save to localStorage
-    const settings = { url, key, backendUrl };
-    helpers.saveToStorage('supabaseSettings', settings);
-
-    // Update dataService with new credentials
-    if (url && key) {
-        dataService.url = url;
-        dataService.key = key;
-        dataService.headers = {
-            'apikey': key,
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        };
-    }
-
-    // Close modal
-    closeSettings();
-
-    // Re-check connection
-    helpers.showToast('Testing connection...', 'info');
-    await checkConnection();
-
-    if (store.useSupabase) {
-        helpers.showToast('Connected to database!', 'success');
-        await loadData();
-    } else {
-        helpers.showToast('Could not connect. Check your credentials.', 'warning');
-    }
 }
 
 // =============================================
@@ -208,9 +98,15 @@ async function loadData() {
 
 async function loadDeliveryData() {
     if (store.useSupabase) {
-        const data = await dataService.getCourierPerformance();
-        store.deliveryData.all = data;
-        helpers.showToast(`Loaded ${data.length} delivery records`, 'success');
+        try {
+            const data = await dataService.getCourierPerformance();
+            store.deliveryData.all = data;
+            if (data.length > 0) {
+                helpers.showToast(`Loaded ${data.length} delivery records`, 'success');
+            }
+        } catch (e) {
+            console.error('Failed to load from Supabase:', e);
+        }
     } else {
         // Load from localStorage
         const stored = helpers.loadFromStorage('deliveryDataV4');
@@ -231,9 +127,15 @@ async function loadDeliveryData() {
 
 async function loadPickupData() {
     if (store.useSupabase) {
-        const data = await dataService.getPickupOrders();
-        store.pickupData.all = data;
-        helpers.showToast(`Loaded ${data.length} pickup orders`, 'success');
+        try {
+            const data = await dataService.getPickupOrders();
+            store.pickupData.all = data;
+            if (data.length > 0) {
+                helpers.showToast(`Loaded ${data.length} pickup orders`, 'success');
+            }
+        } catch (e) {
+            console.error('Failed to load from Supabase:', e);
+        }
     } else {
         const stored = helpers.loadFromStorage('pickupDataV1');
         if (stored && stored.length > 0) {
@@ -244,113 +146,84 @@ async function loadPickupData() {
 }
 
 // =============================================
-// File Upload (supports multiple files)
+// File Upload
 // =============================================
 
 async function handleFileUpload(event) {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
+    console.log(`📁 Processing ${files.length} file(s)...`);
     uiManager.showLoading(true);
 
     let totalProcessed = 0;
     let totalErrors = 0;
 
     try {
-        // Process each file
         for (const file of files) {
             try {
-                const result = await processFile(file);
-                totalProcessed += result.processed;
-                totalErrors += result.errors;
+                console.log(`Processing: ${file.name}`);
+                const result = await excelParser.parseFile(file);
+
+                console.log(`File type: ${result.fileType}, Records: ${result.records.length}`);
+
+                if (result.records.length === 0) {
+                    helpers.showToast(`${file.name}: No valid records`, 'warning');
+                    totalErrors++;
+                    continue;
+                }
+
+                // Switch data type if needed
+                if (result.fileType !== store.activeDataType) {
+                    store.setActiveDataType(result.fileType);
+                    updateDataTypeUI();
+                }
+
+                // Save data
+                if (result.fileType === FILE_TYPES.DELIVERY) {
+                    await saveDeliveryData(result.records);
+                } else {
+                    await savePickupData(result.records);
+                }
+
+                totalProcessed += result.records.length;
+                helpers.showToast(`${file.name}: ${result.records.length} records imported`, 'success');
+
             } catch (err) {
                 console.error(`Error processing ${file.name}:`, err);
+                helpers.showToast(`${file.name}: ${err.message}`, 'error');
                 totalErrors++;
             }
         }
 
-        // Reload and update UI
+        // Reload data
         await loadData();
 
-        // Show summary
         if (files.length > 1) {
-            helpers.showToast(
-                `Processed ${files.length} files: ${totalProcessed} records imported`,
-                totalErrors > 0 ? 'warning' : 'success'
-            );
+            helpers.showToast(`Total: ${totalProcessed} records from ${files.length} files`, 'info');
         }
 
     } catch (error) {
         console.error('Upload error:', error);
-        helpers.showToast('Error processing files: ' + error.message, 'error');
+        helpers.showToast('Error processing files', 'error');
     } finally {
         uiManager.showLoading(false);
         event.target.value = '';
     }
 }
 
-async function processFile(file) {
-    console.log(`📁 Processing: ${file.name}`);
-
-    // Parse the file (auto-detects type)
-    const result = await excelParser.parseFile(file);
-
-    console.log(`📊 File type: ${result.fileType}, Records: ${result.stats.processed}`);
-
-    // Show warnings/errors
-    if (result.warnings.length > 0) {
-        uiManager.showAlerts(result.warnings.slice(0, 5), 'warning');
-    }
-    if (result.errors.length > 0) {
-        uiManager.showAlerts(result.errors.slice(0, 5), 'error');
-    }
-
-    if (result.records.length === 0) {
-        helpers.showToast(`${file.name}: No valid records found`, 'error');
-        return { processed: 0, errors: 1 };
-    }
-
-    // Switch to correct data type if needed
-    if (result.fileType !== store.activeDataType) {
-        store.setActiveDataType(result.fileType);
-        updateDataTypeUI();
-    }
-
-    // Save data
-    if (result.fileType === FILE_TYPES.DELIVERY) {
-        await saveDeliveryData(result.records, result.filename);
-    } else {
-        await savePickupData(result.records, result.filename);
-    }
-
-    const typeLabel = result.fileType === FILE_TYPES.DELIVERY ? 'delivery' : 'pickup';
-    helpers.showToast(
-        `${file.name}: ${result.records.length} ${typeLabel} records imported`,
-        result.errors.length > 0 ? 'warning' : 'success'
-    );
-
-    return { processed: result.records.length, errors: result.errors.length };
-}
-
-async function saveDeliveryData(records, filename) {
+async function saveDeliveryData(records) {
     if (store.useSupabase) {
-        const result = await dataService.importCourierPerformance(records, filename);
-        if (result.failed > 0) {
-            console.warn('Import errors:', result.errors);
-        }
+        await dataService.importCourierPerformance(records);
     } else {
-        // Save to localStorage
         store.deliveryData.all = [...store.deliveryData.all, ...records];
         helpers.saveToStorage('deliveryDataV4', store.deliveryData.all);
     }
 }
 
-async function savePickupData(records, filename) {
+async function savePickupData(records) {
     if (store.useSupabase) {
-        const result = await dataService.importPickupOrders(records, filename);
-        if (result.failed > 0) {
-            console.warn('Import errors:', result.errors);
-        }
+        await dataService.importPickupOrders(records);
     } else {
         store.pickupData.all = [...store.pickupData.all, ...records];
         helpers.saveToStorage('pickupDataV1', store.pickupData.all);
@@ -363,6 +236,7 @@ async function savePickupData(records, filename) {
 
 function populateFilters() {
     const data = store.allData;
+    if (!data || data.length === 0) return;
 
     // Years
     const years = [...new Set(data
@@ -374,11 +248,11 @@ function populateFilters() {
     )].sort().reverse();
 
     const yearSelect = document.getElementById('filterYear');
-    if (yearSelect) {
+    if (yearSelect && years.length > 0) {
         yearSelect.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
     }
 
-    // Zones/Departments (Delivery) or Countries (Pickup)
+    // Departments/Countries
     if (store.isDeliveryMode()) {
         const departments = [...new Set(data.map(d => d.department).filter(Boolean))].sort();
         const zoneSelect = document.getElementById('filterZone');
@@ -408,13 +282,20 @@ function populateFilters() {
 }
 
 function applyFilters() {
-    const type = document.getElementById('filterType')?.value || 'this_month';
+    const type = document.getElementById('filterType')?.value || 'all';
     const now = new Date();
     const data = store.allData;
 
+    if (!data || data.length === 0) {
+        store.filteredData = [];
+        store.displayData = [];
+        updateDashboard();
+        return;
+    }
+
     store.filteredData = data.filter(item => {
         const dateStr = item.report_date || item.execution_date;
-        if (!dateStr) return false;
+        if (!dateStr) return type === 'all';
 
         const d = new Date(dateStr);
         let dateMatch = true;
@@ -495,11 +376,15 @@ function toggleDateInputs() {
 // =============================================
 
 function updateDashboard() {
-    uiManager.updateStats();
-    chartsManager.updateAll();
-    tablesManager.renderRankingTable();
-    uiManager.updateInsights();
-    tablesManager.search(document.getElementById('tableSearch')?.value || '');
+    try {
+        uiManager.updateStats();
+        chartsManager.updateAll();
+        tablesManager.renderRankingTable();
+        uiManager.updateInsights();
+        tablesManager.search(document.getElementById('tableSearch')?.value || '');
+    } catch (e) {
+        console.error('Dashboard update error:', e);
+    }
 }
 
 // =============================================
@@ -507,6 +392,7 @@ function updateDashboard() {
 // =============================================
 
 function switchDataType(type) {
+    console.log('Switching to:', type);
     if (type === store.activeDataType) return;
 
     store.setActiveDataType(type);
@@ -517,25 +403,20 @@ function switchDataType(type) {
 function updateDataTypeUI() {
     // Update toggle buttons
     document.querySelectorAll('.data-type-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.type === store.activeDataType);
+        const isActive = btn.dataset.type === store.activeDataType;
+        btn.classList.toggle('active', isActive);
     });
 
     // Show/hide chart grids
     const deliveryCharts = document.getElementById('deliveryCharts');
     const pickupCharts = document.getElementById('pickupCharts');
 
-    if (deliveryCharts && pickupCharts) {
-        if (store.isDeliveryMode()) {
-            deliveryCharts.style.display = 'grid';
-            pickupCharts.style.display = 'none';
-        } else {
-            deliveryCharts.style.display = 'none';
-            pickupCharts.style.display = 'grid';
-        }
+    if (deliveryCharts) {
+        deliveryCharts.style.display = store.isDeliveryMode() ? 'grid' : 'none';
     }
-
-    // Update table headers
-    updateTableHeaders();
+    if (pickupCharts) {
+        pickupCharts.style.display = store.isDeliveryMode() ? 'none' : 'grid';
+    }
 
     // Update filter labels
     const zoneLabel = document.getElementById('zoneFilterLabel');
@@ -543,71 +424,10 @@ function updateDataTypeUI() {
         zoneLabel.textContent = store.isDeliveryMode() ? 'Department' : 'Country';
     }
 
-    // Show/hide courier filter
+    // Show/hide courier filter (only for delivery)
     const courierGroup = document.getElementById('courierFilterGroup');
     if (courierGroup) {
         courierGroup.style.display = store.isDeliveryMode() ? 'flex' : 'none';
-    }
-
-    // Update ranking title
-    const rankingTitle = document.getElementById('rankingTitle');
-    if (rankingTitle) {
-        rankingTitle.textContent = store.isDeliveryMode() ? 'Top 10 Couriers' : 'Top 10 Orders';
-    }
-
-    // Update ranking table headers
-    const rankingHead = document.getElementById('rankingHead');
-    if (rankingHead) {
-        if (store.isDeliveryMode()) {
-            rankingHead.innerHTML = `
-                <tr>
-                    <th>Rank</th>
-                    <th>Courier</th>
-                    <th>Vehicle</th>
-                    <th>Loaded</th>
-                    <th>Delivered</th>
-                    <th>Success</th>
-                </tr>
-            `;
-        } else {
-            rankingHead.innerHTML = `
-                <tr>
-                    <th>Rank</th>
-                    <th>Document</th>
-                    <th>Country</th>
-                    <th>Weight</th>
-                    <th>Cost</th>
-                    <th>Status</th>
-                </tr>
-            `;
-        }
-    }
-}
-
-function updateTableHeaders() {
-    const headerRow = document.querySelector('#dataTable thead tr');
-    if (!headerRow) return;
-
-    if (store.isDeliveryMode()) {
-        headerRow.innerHTML = `
-            <th onclick="sortTable(0, 'date')">Date <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(1)">Courier <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(2)">Vehicle <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(3)">Department <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(4, 'number')">Loaded <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(5, 'number')">Delivered <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(6, 'number')">Success <i class="fas fa-sort"></i></th>
-        `;
-    } else {
-        headerRow.innerHTML = `
-            <th onclick="sortTable(0, 'date')">Date <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(1)">Document <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(2)">From <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(3)">To <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(4, 'number')">Weight <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(5, 'number')">Cost <i class="fas fa-sort"></i></th>
-            <th onclick="sortTable(6)">Status <i class="fas fa-sort"></i></th>
-        `;
     }
 }
 
@@ -620,15 +440,16 @@ function initializeEventListeners() {
     const fileInput = document.getElementById('fileInput');
     if (fileInput) {
         fileInput.addEventListener('change', handleFileUpload);
+        console.log('✓ File input listener attached');
     }
 
-    // Filter changes
+    // Filter type change
     const filterType = document.getElementById('filterType');
     if (filterType) {
         filterType.addEventListener('change', toggleDateInputs);
     }
 
-    // Search
+    // Search input
     const tableSearch = document.getElementById('tableSearch');
     if (tableSearch) {
         tableSearch.addEventListener('input', helpers.debounce(() => {
@@ -636,19 +457,15 @@ function initializeEventListeners() {
         }, 300));
     }
 
-    // Data type toggle
+    // Data type toggle buttons
     document.querySelectorAll('.data-type-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            switchDataType(btn.dataset.type);
+            const type = btn.dataset.type;
+            console.log('Toggle clicked:', type);
+            switchDataType(type);
         });
+        console.log('✓ Toggle button listener attached:', btn.dataset.type);
     });
-
-    // Connection status click to open settings
-    const connectionStatus = document.getElementById('connectionStatus');
-    if (connectionStatus) {
-        connectionStatus.addEventListener('click', openSettings);
-        connectionStatus.title = 'Click to configure database connection';
-    }
 }
 
 // =============================================
@@ -659,7 +476,6 @@ function switchTab(tabName) {
     store.setActiveTab(tabName);
     uiManager.switchTab(tabName);
 
-    // Update content based on tab
     if (tabName === 'insights') {
         uiManager.updateInsights();
     } else if (tabName === 'ranking') {
@@ -675,7 +491,7 @@ function switchTab(tabName) {
 
 function exportData() {
     const data = store.filteredData;
-    if (data.length === 0) {
+    if (!data || data.length === 0) {
         helpers.showToast('No data to export', 'error');
         return;
     }
@@ -712,13 +528,17 @@ function exportData() {
 
 async function clearAllData() {
     const dataType = store.isDeliveryMode() ? 'delivery' : 'pickup';
-    if (!confirm(`Are you sure you want to delete ALL ${dataType} data? This action cannot be undone.`)) {
+    if (!confirm(`Delete ALL ${dataType} data? This cannot be undone.`)) {
         return;
     }
 
     try {
         if (store.useSupabase) {
-            await dataService.clearAllDeliveries();
+            if (store.isDeliveryMode()) {
+                await dataService.clearAllDeliveries();
+            } else {
+                await dataService.clearAllPickups();
+            }
             helpers.showToast('Database cleared', 'success');
         } else {
             const key = store.isDeliveryMode() ? 'deliveryDataV4' : 'pickupDataV1';
@@ -737,12 +557,12 @@ async function clearAllData() {
 
     } catch (error) {
         console.error('Clear error:', error);
-        helpers.showToast('Error clearing data: ' + error.message, 'error');
+        helpers.showToast('Error: ' + error.message, 'error');
     }
 }
 
 // =============================================
-// Global Exports for HTML onclick
+// Global Exports for HTML onclick handlers
 // =============================================
 
 window.applyFilters = applyFilters;
@@ -754,6 +574,3 @@ window.sortTable = (col, type) => tablesManager.sort(col, type);
 window.changePage = (delta) => tablesManager.changePage(delta);
 window.exportData = exportData;
 window.clearAllData = clearAllData;
-window.openSettings = openSettings;
-window.closeSettings = closeSettings;
-window.saveSettings = saveSettings;
