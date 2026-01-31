@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Analytics Pro</title>
-    
+
     <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <!-- App Styles -->
     <link rel="stylesheet" href="src/styles/main.css">
 </head>
@@ -17,10 +17,10 @@
 
 <div class="app-container">
     <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); z-index: 9999;">
+    <div id="loadingOverlay" class="loading" style="display: none;">
         <div style="text-align: center;">
             <div class="loading-spinner"></div>
-            <p style="margin-top: 16px;">Завантаження...</p>
+            <p style="margin-top: 16px;">Loading...</p>
             <div id="progressBar" style="width: 0%; height: 4px; background: var(--primary); margin-top: 8px; border-radius: 2px; transition: width 0.3s;"></div>
         </div>
     </div>
@@ -29,22 +29,33 @@
     <div class="top-bar">
         <div class="brand">
             <i class="fas fa-truck-fast"></i>
-            <h1>Delivery Analytics Pro</h1>
-            <span id="appVersion" class="version-badge" title="App version">v1.1.0</span>
-            <span id="connectionStatus" class="status-offline" style="margin-left: 8px; font-size: 0.75rem; padding: 4px 8px; border-radius: 4px; background: #e5e7eb;">
+            <h1>Delivery Analytics</h1>
+            <span id="appVersion" class="version-badge" title="App version">v2.0.0</span>
+            <span id="connectionStatus" class="status-offline">
                 <i class="fas fa-database"></i> Local
             </span>
         </div>
-        <div class="actions" style="display: flex; gap: 10px;">
+
+        <!-- Data Type Toggle -->
+        <div class="data-type-toggle">
+            <button class="data-type-btn active" data-type="delivery">
+                <i class="fas fa-truck"></i> Delivery
+            </button>
+            <button class="data-type-btn" data-type="pickup">
+                <i class="fas fa-box"></i> Pickup
+            </button>
+        </div>
+
+        <div class="actions">
             <div class="file-input-wrapper btn btn-primary">
-                <i class="fas fa-cloud-upload-alt"></i> Завантажити Excel
+                <i class="fas fa-cloud-upload-alt"></i> Upload Excel
                 <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
             </div>
             <button class="btn btn-success" onclick="exportData()">
-                <i class="fas fa-file-export"></i> Експорт
+                <i class="fas fa-file-export"></i> Export
             </button>
             <button class="btn btn-danger" onclick="clearAllData()">
-                <i class="fas fa-trash-alt"></i> Очистити
+                <i class="fas fa-trash-alt"></i> Clear
             </button>
         </div>
     </div>
@@ -54,20 +65,20 @@
 
     <!-- Navigation Tabs -->
     <div class="tabs">
-        <button class="tab active" onclick="switchTab('overview')">
-            <i class="fas fa-chart-line"></i> Огляд
+        <button class="tab active" data-tab="overview" onclick="switchTab('overview')">
+            <i class="fas fa-chart-line"></i> Overview
         </button>
-        <button class="tab" onclick="switchTab('comparison')">
-            <i class="fas fa-arrows-left-right"></i> Порівняння
+        <button class="tab" data-tab="comparison" onclick="switchTab('comparison')">
+            <i class="fas fa-arrows-left-right"></i> Compare
         </button>
-        <button class="tab" onclick="switchTab('ranking')">
-            <i class="fas fa-trophy"></i> Рейтинг
+        <button class="tab" data-tab="ranking" onclick="switchTab('ranking')">
+            <i class="fas fa-trophy"></i> Ranking
         </button>
-        <button class="tab" onclick="switchTab('insights')">
-            <i class="fas fa-lightbulb"></i> Аналітика
+        <button class="tab" data-tab="insights" onclick="switchTab('insights')">
+            <i class="fas fa-lightbulb"></i> Insights
         </button>
-        <button class="tab" onclick="switchTab('data')">
-            <i class="fas fa-table"></i> Дані
+        <button class="tab" data-tab="data" onclick="switchTab('data')">
+            <i class="fas fa-table"></i> Data
         </button>
     </div>
 
@@ -76,66 +87,66 @@
         <!-- Filters -->
         <div class="filters-wrapper">
             <div class="filter-group">
-                <label>Період</label>
+                <label>Period</label>
                 <select id="filterType" onchange="toggleDateInputs()">
-                    <option value="this_month" selected>Поточний місяць</option>
-                    <option value="last_month">Минулий місяць</option>
-                    <option value="this_week">Цей тиждень</option>
-                    <option value="last_week">Минулий тиждень</option>
-                    <option value="all">Весь час</option>
-                    <option value="year">Конкретний рік</option>
-                    <option value="custom">Довільний період</option>
+                    <option value="this_month" selected>This Month</option>
+                    <option value="last_month">Last Month</option>
+                    <option value="this_week">This Week</option>
+                    <option value="last_week">Last Week</option>
+                    <option value="all">All Time</option>
+                    <option value="year">Specific Year</option>
+                    <option value="custom">Custom Range</option>
                 </select>
             </div>
 
             <div class="filter-group" id="yearSelectGroup" style="display:none;">
-                <label>Рік</label>
+                <label>Year</label>
                 <select id="filterYear" onchange="applyFilters()"></select>
             </div>
 
             <div class="filter-group" id="dateStartGroup" style="display:none;">
-                <label>З</label>
+                <label>From</label>
                 <input type="date" id="dateStart" onchange="applyFilters()">
             </div>
 
             <div class="filter-group" id="dateEndGroup" style="display:none;">
-                <label>По</label>
+                <label>To</label>
                 <input type="date" id="dateEnd" onchange="applyFilters()">
             </div>
 
             <div class="filter-group">
-                <label>Зона</label>
+                <label id="zoneFilterLabel" for="filterZone">Department</label>
                 <select id="filterZone" onchange="applyFilters()">
-                    <option value="">Всі зони</option>
+                    <option value="">All</option>
                 </select>
             </div>
 
-            <div class="filter-group">
-                <label>Курʼєр</label>
+            <div class="filter-group" id="courierFilterGroup">
+                <label>Courier</label>
                 <select id="filterCourier" onchange="applyFilters()">
-                    <option value="">Всі курʼєри</option>
+                    <option value="">All couriers</option>
                 </select>
             </div>
 
             <button class="btn btn-outline" onclick="applyFilters()">
-                <i class="fas fa-sync-alt"></i> Оновити
+                <i class="fas fa-sync-alt"></i> Refresh
             </button>
         </div>
 
         <!-- Stats Grid -->
         <div id="statsGrid" class="stats-grid">
             <div class="stat-card">
-                <span class="stat-label">Завантажте дані</span>
+                <span class="stat-label">Upload Data</span>
                 <span class="stat-value">-</span>
-                <span class="stat-sub">Натисніть "Завантажити Excel"</span>
+                <span class="stat-sub">Click "Upload Excel" to start</span>
             </div>
         </div>
 
-        <!-- Charts Grid -->
-        <div class="charts-grid">
+        <!-- Charts Grid - Delivery Mode -->
+        <div id="deliveryCharts" class="charts-grid">
             <div class="chart-card">
                 <div class="chart-header">
-                    <h3><i class="fas fa-chart-area"></i> Динаміка доставок</h3>
+                    <h3><i class="fas fa-chart-area"></i> Delivery Timeline</h3>
                 </div>
                 <div class="chart-container">
                     <canvas id="timelineChart"></canvas>
@@ -144,7 +155,7 @@
 
             <div class="chart-card">
                 <div class="chart-header">
-                    <h3><i class="fas fa-chart-pie"></i> Успішність по зонах</h3>
+                    <h3><i class="fas fa-chart-bar"></i> Success by Department</h3>
                 </div>
                 <div class="chart-container">
                     <canvas id="zoneChart"></canvas>
@@ -153,7 +164,7 @@
 
             <div class="chart-card">
                 <div class="chart-header">
-                    <h3><i class="fas fa-chart-line"></i> Тренд успішності</h3>
+                    <h3><i class="fas fa-chart-line"></i> Success Rate Trend</h3>
                 </div>
                 <div class="chart-container">
                     <canvas id="trendChart"></canvas>
@@ -162,10 +173,49 @@
 
             <div class="chart-card">
                 <div class="chart-header">
-                    <h3><i class="fas fa-chart-bar"></i> Розподіл успішності</h3>
+                    <h3><i class="fas fa-chart-pie"></i> Success Distribution</h3>
                 </div>
                 <div class="chart-container">
                     <canvas id="distributionChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Grid - Pickup Mode -->
+        <div id="pickupCharts" class="charts-grid" style="display: none;">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3><i class="fas fa-globe"></i> Orders by Country</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="countryChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3><i class="fas fa-coins"></i> Revenue Over Time</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="revenueChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3><i class="fas fa-tasks"></i> Status Distribution</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3><i class="fas fa-weight-hanging"></i> Weight by Date</h3>
+                </div>
+                <div class="chart-container">
+                    <canvas id="weightChart"></canvas>
                 </div>
             </div>
         </div>
@@ -175,7 +225,7 @@
     <div id="tab-comparison" class="tab-content">
         <div class="chart-card full-width">
             <div class="chart-header">
-                <h3><i class="fas fa-users"></i> Порівняння курʼєрів</h3>
+                <h3><i class="fas fa-users"></i> Courier Comparison</h3>
             </div>
             <div class="chart-container" style="height: 400px;">
                 <canvas id="courierComparisonChart"></canvas>
@@ -187,24 +237,24 @@
     <div id="tab-ranking" class="tab-content">
         <div class="chart-card">
             <div class="chart-header">
-                <h3><i class="fas fa-trophy"></i> Топ-10 курʼєрів</h3>
+                <h3><i class="fas fa-trophy"></i> <span id="rankingTitle">Top 10 Couriers</span></h3>
             </div>
             <div class="table-wrapper">
                 <table class="ranking-table">
-                    <thead>
+                    <thead id="rankingHead">
                         <tr>
-                            <th>Місце</th>
-                            <th>Курʼєр</th>
-                            <th>Авто</th>
-                            <th>Завантажено</th>
-                            <th>Доставлено</th>
-                            <th>Успішність</th>
+                            <th>Rank</th>
+                            <th>Courier</th>
+                            <th>Vehicle</th>
+                            <th>Loaded</th>
+                            <th>Delivered</th>
+                            <th>Success</th>
                         </tr>
                     </thead>
                     <tbody id="rankingBody">
                         <tr>
-                            <td colspan="6" style="text-align: center; padding: 40px; color: var(--text-light);">
-                                Завантажте дані для перегляду рейтингу
+                            <td colspan="6" class="empty-message">
+                                Upload data to view ranking
                             </td>
                         </tr>
                     </tbody>
@@ -216,11 +266,11 @@
     <!-- TAB: Insights -->
     <div id="tab-insights" class="tab-content">
         <div class="insights-card">
-            <h3><i class="fas fa-lightbulb"></i> Автоматичні інсайти</h3>
+            <h3><i class="fas fa-lightbulb"></i> Smart Insights</h3>
             <div id="insightsContainer">
-                <div class="insight-item">
+                <div class="insight-item insight-info">
                     <i class="fas fa-info-circle"></i>
-                    <span>Завантажте дані для отримання аналітичних інсайтів</span>
+                    <span>Upload data to get analytical insights</span>
                 </div>
             </div>
         </div>
@@ -230,38 +280,38 @@
     <div id="tab-data" class="tab-content">
         <div class="table-card">
             <div class="table-header">
-                <h3><i class="fas fa-table"></i> Детальні дані</h3>
-                <input type="text" id="tableSearch" class="search-input" placeholder="Пошук курʼєра або авто..." oninput="searchTable()">
+                <h3><i class="fas fa-table"></i> Detailed Data</h3>
+                <input type="text" id="tableSearch" class="search-input" placeholder="Search..." oninput="searchTable()">
             </div>
             <div class="table-wrapper">
-                <table>
+                <table id="dataTable">
                     <thead>
                         <tr>
-                            <th onclick="sortTable(0, 'date')">Дата <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(1, 'string')">Курʼєр <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(2, 'string')">Авто <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(3, 'string')">Зона <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(4, 'number')">Завантажено <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(5, 'number')">Доставлено <i class="fas fa-sort"></i></th>
-                            <th onclick="sortTable(6, 'number')">Успішність <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(0, 'date')">Date <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(1)">Courier <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(2)">Vehicle <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(3)">Department <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(4, 'number')">Loaded <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(5, 'number')">Delivered <i class="fas fa-sort"></i></th>
+                            <th onclick="sortTable(6, 'number')">Success <i class="fas fa-sort"></i></th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
                         <tr>
-                            <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-light);">
-                                Немає даних
+                            <td colspan="7" class="empty-message">
+                                No data available
                             </td>
                         </tr>
                     </tbody>
                 </table>
             </div>
             <div class="pagination">
-                <span id="pageInfo" class="page-info">Немає записів</span>
+                <span id="pageInfo" class="page-info">No records</span>
                 <button id="btnPrev" class="page-btn" onclick="changePage(-1)" disabled>
-                    <i class="fas fa-chevron-left"></i> Назад
+                    <i class="fas fa-chevron-left"></i> Prev
                 </button>
                 <button id="btnNext" class="page-btn" onclick="changePage(1)" disabled>
-                    Далі <i class="fas fa-chevron-right"></i>
+                    Next <i class="fas fa-chevron-right"></i>
                 </button>
             </div>
         </div>

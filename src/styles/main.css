@@ -131,6 +131,71 @@ body {
 }
 
 /* =============================================
+   Data Type Toggle (Delivery/Pickup)
+   ============================================= */
+
+.data-type-toggle {
+    display: flex;
+    gap: 8px;
+    background: var(--bg-body);
+    padding: 4px;
+    border-radius: 10px;
+}
+
+.data-type-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    color: var(--text-light);
+    font-size: 0.95rem;
+}
+
+.data-type-btn:hover {
+    color: var(--primary);
+    background: rgba(79, 70, 229, 0.1);
+}
+
+.data-type-btn.active {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
+}
+
+.data-type-btn i {
+    font-size: 1rem;
+}
+
+/* Empty State Message */
+.empty-message {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-light);
+}
+
+.empty-message i {
+    font-size: 4rem;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.empty-message h3 {
+    font-size: 1.25rem;
+    margin-bottom: 8px;
+    color: var(--text-main);
+}
+
+.empty-message p {
+    font-size: 0.95rem;
+}
+
+/* =============================================
    Filters
    ============================================= */
 
