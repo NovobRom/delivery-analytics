@@ -1,112 +1,49 @@
 // =============================================
 // Data Service v2.0
-// Supports: Backend API, Direct Supabase, localStorage
+// Supports: Direct Supabase + localStorage fallback
 // =============================================
 
-import apiService from './api.service.js';
-import { FILE_TYPES, API_ENDPOINTS } from '../utils/constants.js';
-
-// Try to load settings from localStorage first
-function loadStoredSettings() {
-    try {
-        const stored = localStorage.getItem('supabaseSettings');
-        if (stored) {
-            return JSON.parse(stored);
-        }
-    } catch (e) {
-        console.log('Could not load stored settings');
-    }
-    return null;
-}
-
-// Dynamic config loading with fallback
-let SUPABASE_URL = '';
-let SUPABASE_ANON_KEY = '';
-
-// First try localStorage settings
-const storedSettings = loadStoredSettings();
-if (storedSettings && storedSettings.url && storedSettings.key) {
-    SUPABASE_URL = storedSettings.url;
-    SUPABASE_ANON_KEY = storedSettings.key;
-    console.log('✅ Loaded Supabase settings from localStorage');
-} else {
-    // Then try to load config file (will fail on GitHub Pages if file not present)
-    try {
-        const config = await import('../config/supabase.js').catch(() => null);
-        if (config) {
-            SUPABASE_URL = config.SUPABASE_URL || '';
-            SUPABASE_ANON_KEY = config.SUPABASE_ANON_KEY || '';
-            console.log('✅ Loaded Supabase settings from config file');
-        }
-    } catch (e) {
-        console.log('ℹ️ Supabase config not found, using localStorage mode');
-    }
-}
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config/supabase.js';
 
 class DataService {
     constructor() {
         this.url = SUPABASE_URL;
         this.key = SUPABASE_ANON_KEY;
-        this.headers = this.key ? {
+        this.headers = {
             'apikey': this.key,
             'Authorization': `Bearer ${this.key}`,
             'Content-Type': 'application/json',
             'Prefer': 'return=representation'
-        } : {};
-
-        // Mode: 'api' | 'direct' | 'local'
+        };
         this.mode = 'local';
     }
 
     /**
-     * Check which backend is available
-     * Returns: 'api' | 'direct' | 'local'
+     * Check connection to Supabase
      */
     async checkConnection() {
-        // Reload settings in case they changed
-        const storedSettings = loadStoredSettings();
-        if (storedSettings && storedSettings.url && storedSettings.key) {
-            this.url = storedSettings.url;
-            this.key = storedSettings.key;
-            this.headers = {
-                'apikey': this.key,
-                'Authorization': `Bearer ${this.key}`,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            };
+        if (!this.url || !this.key) {
+            console.log('📁 No Supabase config, using localStorage');
+            this.mode = 'local';
+            return 'local';
         }
 
-        // First try Backend API
         try {
-            const backendUrl = storedSettings?.backendUrl;
-            if (backendUrl) {
-                apiService.baseUrl = backendUrl;
+            const response = await fetch(`${this.url}/rest/v1/`, {
+                method: 'HEAD',
+                headers: this.headers
+            });
+
+            if (response.ok || response.status === 404) {
+                this.mode = 'direct';
+                console.log('✅ Connected to Supabase');
+                return 'direct';
             }
-            await apiService.healthCheck();
-            this.mode = 'api';
-            console.log('✅ Connected to Backend API');
-            return 'api';
         } catch (e) {
-            console.log('⚠️ Backend API not available');
+            console.log('⚠️ Supabase connection failed:', e.message);
         }
 
-        // Then try direct Supabase (only if config exists)
-        if (this.url && this.key) {
-            try {
-                const response = await fetch(`${this.url}/rest/v1/`, {
-                    method: 'HEAD',
-                    headers: this.headers
-                });
-                if (response.ok || response.status === 404) {
-                    this.mode = 'direct';
-                    console.log('✅ Connected to Supabase directly');
-                    return 'direct';
-                }
-            } catch (e) {
-                console.log('⚠️ Supabase not available');
-            }
-        }
-
+        this.mode = 'local';
         console.log('📁 Using localStorage');
         return 'local';
     }
@@ -120,7 +57,10 @@ class DataService {
         const response = await fetch(`${this.url}/rest/v1/${table}${query}`, {
             headers: this.headers
         });
-        if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Fetch failed: ${response.status} - ${error}`);
+        }
         return response.json();
     }
 
@@ -131,279 +71,109 @@ class DataService {
             headers: this.headers,
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error(`Insert failed: ${response.statusText}`);
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Insert failed: ${response.status} - ${error}`);
+        }
         return response.json();
     }
 
     // =========================================
-    // Unified API Methods
-    // =========================================
-
-    async getZones() {
-        if (this.mode === 'api') return apiService.getZones();
-        if (this.mode === 'direct') return this.fetchDirect('zones', '?order=name');
-        return [];
-    }
-
-    async getCouriers() {
-        if (this.mode === 'api') return apiService.getCouriers();
-        if (this.mode === 'direct') return this.fetchDirect('couriers', '?order=full_name');
-        return [];
-    }
-
-    async getDeliveries(filters = {}) {
-        if (this.mode === 'api') {
-            const params = {};
-            if (filters.startDate) params.start_date = filters.startDate;
-            if (filters.endDate) params.end_date = filters.endDate;
-            if (filters.courierId) params.courier_id = filters.courierId;
-            if (filters.zoneId) params.zone_id = filters.zoneId;
-
-            const data = await apiService.getDeliveries(params);
-            return data.map(d => ({
-                id: d.id,
-                delivery_date: d.delivery_date,
-                loaded_count: d.loaded_count,
-                delivered_count: d.delivered_count,
-                courier_id: d.courier_id,
-                zone_id: d.zone_id,
-                couriers: d.courier_name ? { full_name: d.courier_name, vehicle_number: d.vehicle_number } : null,
-                zones: d.zone_name ? { name: d.zone_name } : null
-            }));
-        }
-
-        if (this.mode === 'direct') {
-            let query = '?select=*,couriers(full_name,vehicle_number),zones(name)';
-            if (filters.startDate) query += `&delivery_date=gte.${filters.startDate}`;
-            if (filters.endDate) query += `&delivery_date=lte.${filters.endDate}`;
-            query += '&order=delivery_date.desc';
-            return this.fetchDirect('deliveries', query);
-        }
-
-        return [];
-    }
-
-    // =========================================
-    // NEW: Courier Performance (Delivery v2)
+    // Courier Performance (Delivery data)
     // =========================================
 
     async getCourierPerformance(filters = {}) {
-        if (this.mode === 'api') {
-            const params = new URLSearchParams();
-            if (filters.startDate) params.append('date_from', filters.startDate);
-            if (filters.endDate) params.append('date_to', filters.endDate);
-            if (filters.courierName) params.append('courier_name', filters.courierName);
-            if (filters.department) params.append('department', filters.department);
+        if (this.mode !== 'direct') return [];
 
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.COURIER_PERFORMANCE}?${params}`);
-            if (!response.ok) throw new Error('Failed to fetch courier performance');
-            return response.json();
-        }
-
-        if (this.mode === 'direct') {
-            let query = '?order=report_date.desc';
+        try {
+            let query = '?order=report_date.desc&limit=1000';
             if (filters.startDate) query += `&report_date=gte.${filters.startDate}`;
             if (filters.endDate) query += `&report_date=lte.${filters.endDate}`;
-            return this.fetchDirect('courier_performance', query);
+            return await this.fetchDirect('courier_performance', query);
+        } catch (e) {
+            console.error('getCourierPerformance error:', e);
+            return [];
         }
-
-        return [];
     }
 
-    async importCourierPerformance(records, filename) {
-        if (this.mode === 'api') {
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.BULK_IMPORT_DELIVERY}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ records, filename })
-            });
-            if (!response.ok) throw new Error('Import failed');
-            return response.json();
+    async importCourierPerformance(records) {
+        if (this.mode !== 'direct') {
+            return { imported: 0, failed: records.length, errors: ['No database connection'] };
         }
 
-        if (this.mode === 'direct') {
-            return this.insertDirect('courier_performance', records);
+        try {
+            const result = await this.insertDirect('courier_performance', records);
+            return { imported: result.length || records.length, failed: 0, errors: [] };
+        } catch (e) {
+            console.error('Import error:', e);
+            return { imported: 0, failed: records.length, errors: [e.message] };
         }
-
-        return { imported: 0, failed: records.length, errors: ['No database connection'] };
     }
 
     // =========================================
-    // NEW: Pickup Orders
+    // Pickup Orders
     // =========================================
 
     async getPickupOrders(filters = {}) {
-        if (this.mode === 'api') {
-            const params = new URLSearchParams();
-            if (filters.startDate) params.append('date_from', filters.startDate);
-            if (filters.endDate) params.append('date_to', filters.endDate);
-            if (filters.senderCountry) params.append('sender_country', filters.senderCountry);
-            if (filters.recipientCountry) params.append('recipient_country', filters.recipientCountry);
+        if (this.mode !== 'direct') return [];
 
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.PICKUP_ORDERS}?${params}`);
-            if (!response.ok) throw new Error('Failed to fetch pickup orders');
-            return response.json();
-        }
-
-        if (this.mode === 'direct') {
-            let query = '?order=execution_date.desc';
+        try {
+            let query = '?order=execution_date.desc&limit=1000';
             if (filters.startDate) query += `&execution_date=gte.${filters.startDate}`;
             if (filters.endDate) query += `&execution_date=lte.${filters.endDate}`;
-            return this.fetchDirect('pickup_orders', query);
+            return await this.fetchDirect('pickup_orders', query);
+        } catch (e) {
+            console.error('getPickupOrders error:', e);
+            return [];
         }
-
-        return [];
     }
 
-    async importPickupOrders(records, filename) {
-        if (this.mode === 'api') {
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.BULK_IMPORT_PICKUP}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ records, filename })
-            });
-            if (!response.ok) throw new Error('Import failed');
-            return response.json();
+    async importPickupOrders(records) {
+        if (this.mode !== 'direct') {
+            return { imported: 0, failed: records.length, errors: ['No database connection'] };
         }
 
-        if (this.mode === 'direct') {
-            return this.insertDirect('pickup_orders', records);
+        try {
+            const result = await this.insertDirect('pickup_orders', records);
+            return { imported: result.length || records.length, failed: 0, errors: [] };
+        } catch (e) {
+            console.error('Import error:', e);
+            return { imported: 0, failed: records.length, errors: [e.message] };
         }
-
-        return { imported: 0, failed: records.length, errors: ['No database connection'] };
     }
 
     // =========================================
-    // Legacy Import (for backward compatibility)
+    // Clear Data
     // =========================================
-
-    async importDeliveries(records, onProgress = null) {
-        if (this.mode === 'api') {
-            const result = await apiService.importDeliveries(records);
-            if (onProgress) {
-                onProgress({ current: records.length, total: records.length, percent: 100 });
-            }
-            return {
-                success: result.imported_records,
-                failed: result.skipped_records,
-                errors: result.errors.map(e => ({ error: e }))
-            };
-        }
-
-        if (this.mode === 'direct') {
-            return this._importDirectly(records, onProgress);
-        }
-
-        return { success: 0, failed: records.length, errors: [{ error: 'No database connection' }] };
-    }
-
-    async _importDirectly(records, onProgress) {
-        const results = { success: 0, failed: 0, errors: [] };
-
-        for (let i = 0; i < records.length; i++) {
-            const record = records[i];
-            try {
-                const courier = await this._getOrCreateCourier(record.courierName, record.vehicleNumber);
-                const zone = record.zoneName ? await this._getOrCreateZone(record.zoneName) : null;
-
-                await this._upsertDelivery({
-                    delivery_date: record.deliveryDate,
-                    courier_id: courier.id,
-                    zone_id: zone?.id || null,
-                    loaded_count: record.loadedCount,
-                    delivered_count: record.deliveredCount
-                });
-                results.success++;
-            } catch (error) {
-                results.failed++;
-                results.errors.push({ record, error: error.message });
-            }
-
-            if (onProgress) {
-                onProgress({
-                    current: i + 1,
-                    total: records.length,
-                    percent: Math.round(((i + 1) / records.length) * 100)
-                });
-            }
-        }
-        return results;
-    }
-
-    async _getOrCreateCourier(fullName, vehicleNumber) {
-        const encoded = encodeURIComponent(fullName);
-        const existing = await this.fetchDirect('couriers', `?full_name=eq.${encoded}`);
-        if (existing?.length > 0) return existing[0];
-        const created = await this.insertDirect('couriers', { full_name: fullName, vehicle_number: vehicleNumber });
-        return created[0];
-    }
-
-    async _getOrCreateZone(name) {
-        const encoded = encodeURIComponent(name);
-        const existing = await this.fetchDirect('zones', `?name=eq.${encoded}`);
-        if (existing?.length > 0) return existing[0];
-        const created = await this.insertDirect('zones', { name });
-        return created[0];
-    }
-
-    async _upsertDelivery(data) {
-        const response = await fetch(`${this.url}/rest/v1/deliveries`, {
-            method: 'POST',
-            headers: { ...this.headers, 'Prefer': 'resolution=merge-duplicates,return=representation' },
-            body: JSON.stringify(data)
-        });
-        if (!response.ok) throw new Error(`Upsert failed: ${response.statusText}`);
-        return response.json();
-    }
 
     async clearAllDeliveries() {
-        if (this.mode === 'api') return apiService.clearDeliveries();
-        if (this.mode === 'direct') {
-            const response = await fetch(`${this.url}/rest/v1/deliveries?id=neq.00000000-0000-0000-0000-000000000000`, {
+        if (this.mode !== 'direct') return false;
+
+        try {
+            const response = await fetch(`${this.url}/rest/v1/courier_performance?id=neq.00000000-0000-0000-0000-000000000000`, {
                 method: 'DELETE',
                 headers: this.headers
             });
-            if (!response.ok) throw new Error(`Clear failed: ${response.statusText}`);
+            return response.ok;
+        } catch (e) {
+            console.error('Clear error:', e);
+            return false;
         }
-        return true;
     }
 
-    // =========================================
-    // Analytics
-    // =========================================
+    async clearAllPickups() {
+        if (this.mode !== 'direct') return false;
 
-    async getFullAnalytics(startDate, endDate) {
-        if (this.mode === 'api') return apiService.getFullAnalytics(startDate, endDate);
-        return null;
-    }
-
-    async getDeliveryStats(startDate, endDate) {
-        if (this.mode === 'api') {
-            const params = new URLSearchParams();
-            if (startDate) params.append('date_from', startDate);
-            if (endDate) params.append('date_to', endDate);
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.STATS_DELIVERY}?${params}`);
-            if (!response.ok) return null;
-            return response.json();
+        try {
+            const response = await fetch(`${this.url}/rest/v1/pickup_orders?id=neq.00000000-0000-0000-0000-000000000000`, {
+                method: 'DELETE',
+                headers: this.headers
+            });
+            return response.ok;
+        } catch (e) {
+            console.error('Clear error:', e);
+            return false;
         }
-        return null;
-    }
-
-    async getPickupStats(startDate, endDate) {
-        if (this.mode === 'api') {
-            const params = new URLSearchParams();
-            if (startDate) params.append('date_from', startDate);
-            if (endDate) params.append('date_to', endDate);
-            const response = await fetch(`${apiService.baseUrl}${API_ENDPOINTS.STATS_PICKUP}?${params}`);
-            if (!response.ok) return null;
-            return response.json();
-        }
-        return null;
-    }
-
-    async getTopCouriers(startDate, endDate, limit = 10) {
-        if (this.mode === 'api') return apiService.getTopCouriers(startDate, endDate, limit);
-        return [];
     }
 }
 
