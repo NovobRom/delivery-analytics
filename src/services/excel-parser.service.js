@@ -11,8 +11,10 @@ import {
     DATE_PATTERNS,
     CURRENCY_PATTERN,
     FILE_TYPES,
-    DEFAULTS
+    DEFAULTS,
+    API_ENDPOINTS
 } from '../utils/constants.js';
+import columnMatcher from './column-matcher.service.js';
 
 class ExcelParserService {
 
@@ -32,28 +34,62 @@ class ExcelParserService {
     detectFileType(headers) {
         const headerStr = headers.join(' ').toLowerCase();
 
-        // Check for delivery markers
-        const deliveryMatches = FILE_TYPE_MARKERS.DELIVERY.filter(marker =>
+        // Check for Event markers (Source B)
+        const eventMatches = FILE_TYPE_MARKERS.EVENTS.filter(marker =>
             headerStr.includes(marker.toLowerCase())
         );
 
-        // Check for pickup markers
-        const pickupMatches = FILE_TYPE_MARKERS.PICKUP.filter(marker =>
+        // Check for Shipment markers (Source A)
+        const shipmentMatches = FILE_TYPE_MARKERS.SHIPMENTS.filter(marker =>
             headerStr.includes(marker.toLowerCase())
         );
 
-        if (deliveryMatches.length >= 2) {
-            this.lastDetectedType = FILE_TYPES.DELIVERY;
-            return FILE_TYPES.DELIVERY;
+        if (eventMatches.length >= 2) {
+            this.lastDetectedType = FILE_TYPES.EVENTS;
+            return FILE_TYPES.EVENTS;
         }
 
-        if (pickupMatches.length >= 2) {
-            this.lastDetectedType = FILE_TYPES.PICKUP;
-            return FILE_TYPES.PICKUP;
+        if (shipmentMatches.length >= 2) {
+            this.lastDetectedType = FILE_TYPES.SHIPMENTS;
+            return FILE_TYPES.SHIPMENTS;
         }
 
         this.lastDetectedType = FILE_TYPES.UNKNOWN;
         return FILE_TYPES.UNKNOWN;
+    }
+
+    /**
+     * Reads file headers and detects type asynchronously
+     * @param {File} file - File object
+     * @returns {Promise<string>} - Detected file type
+     */
+    detectTypeFromFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    // Use global XLSX from CDN
+                    const workbook = window.XLSX.read(data, { type: 'array' });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const jsonData = window.XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    const headers = jsonData[0];
+
+                    if (!headers || headers.length === 0) {
+                        resolve(FILE_TYPES.UNKNOWN);
+                        return;
+                    }
+
+                    const type = this.detectFileType(headers);
+                    resolve(type);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(file);
+        });
     }
 
     // ==========================================
@@ -212,26 +248,43 @@ class ExcelParserService {
     }
 
     /**
-     * Parses a delivery report row
+     * Parses a delivery report row with smart column mapping
      */
-    parseDeliveryRow(row) {
-        const mapped = this.mapRowToFields(row, DELIVERY_COLUMN_MAP);
+    parseDeliveryRow(row, columnMap = null) {
+        // If no custom mapping provided, try to map columns intelligently
+        if (!columnMap) {
+            const headers = Object.keys(row);
+            const mappingResult = columnMatcher.mapHeaders(headers, 'delivery');
+            columnMap = mappingResult.columnMap;
+
+            // Log mapping confidence for debugging
+            if (mappingResult.confidence < 0.8) {
+                console.warn('Low confidence column mapping:', mappingResult);
+            }
+        }
+
+        // Helper function to get value by mapped field
+        const getValue = (field) => {
+            // Find the Excel column that maps to this field
+            const excelColumn = Object.keys(columnMap).find(key => columnMap[key] === field);
+            return excelColumn ? row[excelColumn] : null;
+        };
 
         return {
-            report_date: this.parseDate(row['Дата відомості']),
-            courier_name: row["ПІБ кур'єра"]?.toString().trim() || null,
-            car_number: row['Номер авто']?.toString().trim() || null,
-            department: row['Підрозділ відомості']?.toString().trim() || null,
-            reports_count: this.parseInt(row['К-сть відомостей']),
-            addresses_count: this.parseInt(row['К-сть адрес']),
-            loaded_parcels: this.parseInt(row['К-сть завантажених ШК']),
-            delivered_parcels: this.parseInt(row['К-сть доставлених ШК на дату відомості']),
-            delivered_in_hand: this.parseInt(row['К-сть доставлених ШК на дату відомості "В руки"']),
-            delivered_safe_place: this.parseInt(row['К-сть доставлених ШК на дату відомості "SafePlace"']),
-            undelivered_parcels: this.parseInt(row['К-сть недоставлених ШК на дату відомості']),
-            undelivered_with_reason: this.parseInt(row['К-сть недоставлених ШК з причиною']),
-            undelivered_no_reason: this.parseInt(row['К-сть недоставлених ШК без причини']),
-            delivery_success_rate: this.parsePercentage(row['Відсоток доставлених ШК'])
+            report_date: this.parseDate(getValue('report_date') || row['Дата відомості']),
+            courier_name: (getValue('courier_name') || row["ПІБ кур'єра"])?.toString().trim() || null,
+            car_number: (getValue('car_number') || row['Номер авто'])?.toString().trim() || null,
+            department: (getValue('department') || row['Підрозділ відомості'])?.toString().trim() || null,
+            reports_count: this.parseInt(getValue('reports_count') || row['К-сть відомостей']),
+            addresses_count: this.parseInt(getValue('addresses_count') || row['К-сть адрес']),
+            loaded_parcels: this.parseInt(getValue('loaded_parcels') || row['К-сть завантажених ШК']),
+            delivered_parcels: this.parseInt(getValue('delivered_parcels') || row['К-сть доставлених ШК на дату відомості']),
+            delivered_in_hand: this.parseInt(getValue('delivered_in_hand') || row['К-сть доставлених ШК на дату відомості "В руки"']),
+            delivered_safe_place: this.parseInt(getValue('delivered_safe_place') || row['К-сть доставлених ШК на дату відомості "SafePlace"']),
+            undelivered_parcels: this.parseInt(getValue('undelivered_parcels') || row['К-сть недоставлених ШК на дату відомості']),
+            undelivered_with_reason: this.parseInt(getValue('undelivered_with_reason') || row['К-сть недоставлених ШК з причиною']),
+            undelivered_no_reason: this.parseInt(getValue('undelivered_no_reason') || row['К-сть недоставлених ШК без причини']),
+            delivery_success_rate: this.parsePercentage(getValue('delivery_success_rate') || row['Відсоток доставлених ШК'])
         };
     }
 
@@ -530,10 +583,10 @@ class ExcelParserService {
             // Success statuses: "Done", "Закрито", "Виконано", "Closed", "Completed"
             const status = (record.pickup_status || '').toLowerCase();
             const isSuccess = status.includes('done') ||
-                            status.includes('закрито') ||
-                            status.includes('виконано') ||
-                            status.includes('closed') ||
-                            status.includes('completed');
+                status.includes('закрито') ||
+                status.includes('виконано') ||
+                status.includes('closed') ||
+                status.includes('completed');
 
             if (isSuccess) {
                 groups[key].success_count++;
@@ -610,6 +663,33 @@ class ExcelParserService {
             groups[country].push(record);
         });
         return groups;
+    }
+
+    /**
+     * Uploads file to backend for server-side processing
+     * @param {File} file - File object
+     * @param {string} type - FILE_TYPES enum value
+     */
+    async uploadToBackend(file, type) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        let endpoint = '';
+        if (type === FILE_TYPES.SHIPMENTS) endpoint = API_ENDPOINTS.INGEST_SHIPMENTS;
+        else if (type === FILE_TYPES.EVENTS) endpoint = API_ENDPOINTS.INGEST_EVENTS;
+        else throw new Error('Unknown file type for upload');
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errModel = await response.json();
+            throw new Error(errModel.detail || `Upload failed: ${response.statusText}`);
+        }
+
+        return await response.json();
     }
 
     /**

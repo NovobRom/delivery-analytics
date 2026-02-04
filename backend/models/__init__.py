@@ -24,9 +24,9 @@ from .analytics import (
     ZoneStats,
     DailyStats,
     TopCourier,
-    TrendPoint,
     AnalyticsSummary,
 )
+from backend.models.schema_v2 import ShipmentImport, DeliveryEventImport
 from .courier_performance import (
     CourierPerformanceBase,
     CourierPerformanceCreate,

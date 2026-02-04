@@ -198,61 +198,67 @@ async function handleFileUpload(event) {
     console.log(`📁 Processing ${files.length} file(s)...`);
     uiManager.showLoading(true);
 
-    let totalProcessed = 0;
-    let totalErrors = 0;
-
     try {
+        let processedCount = 0;
+        let errors = [];
+
         for (const file of files) {
             try {
-                console.log(`Processing: ${file.name}`);
-                const result = await excelParser.parseFile(file);
+                // 1. Detect Type Client-Side (Preview)
+                helpers.showToast(`Analyzing ${file.name}...`, 'info');
+                const fileType = await excelParser.detectTypeFromFile(file);
 
-                console.log(`File type: ${result.fileType}, Records: ${result.records.length}`);
-
-                if (result.records.length === 0) {
-                    helpers.showToast(`${file.name}: No valid records`, 'warning');
-                    totalErrors++;
-                    continue;
+                if (fileType === FILE_TYPES.UNKNOWN) {
+                    throw new Error('Unknown file format. Please check file headers against Source A/B specs.');
                 }
 
-                // Switch data type if needed
-                if (result.fileType !== store.activeDataType) {
-                    store.setActiveDataType(result.fileType);
-                    updateDataTypeUI();
-                }
+                const typeLabel = fileType === FILE_TYPES.SHIPMENTS ? 'Shipments (Source A)' : 'Events (Source B)';
+                console.log(`Dedicated type: ${typeLabel}`);
 
-                // Save data
-                if (result.fileType === FILE_TYPES.DELIVERY) {
-                    await saveDeliveryData(result.records);
+                // 2. Upload to Backend
+                helpers.showToast(`Uploading as ${typeLabel}...`, 'info');
+                const result = await excelParser.uploadToBackend(file, fileType);
+
+                // 3. Handle Result
+                if (result.success) {
+                    processedCount += result.imported_records;
+                    helpers.showToast(`Imported ${result.imported_records} records from ${file.name}`, 'success');
                 } else {
-                    await savePickupData(result.records);
+                    errors.push(`${file.name}: ${result.errors.length} errors (see console)`);
+                    console.error('Import errors:', result.errors);
                 }
 
-                totalProcessed += result.records.length;
-                helpers.showToast(`${file.name}: ${result.records.length} records imported`, 'success');
+                if (result.skipped_records > 0) {
+                    console.warn(`Skipped ${result.skipped_records} records in ${file.name}`);
+                }
 
             } catch (err) {
-                console.error(`Error processing ${file.name}:`, err);
-                helpers.showToast(`${file.name}: ${err.message}`, 'error');
-                totalErrors++;
+                console.error(`Error processing file ${file.name}:`, err);
+                errors.push(`${file.name}: ${err.message}`);
             }
         }
 
-        // Reload data
-        await loadData();
-
-        if (files.length > 1) {
-            helpers.showToast(`Total: ${totalProcessed} records from ${files.length} files`, 'info');
+        if (errors.length > 0) {
+            uiManager.showAlert(`Errors occurred:<br/>${errors.slice(0, 3).join('<br/>')}`, 'error');
         }
 
-    } catch (error) {
-        console.error('Upload error:', error);
-        helpers.showToast('Error processing files', 'error');
+        if (processedCount > 0) {
+            // Reload data to reflect changes
+            await loadData();
+            uiManager.showAlert(`Successfully processed ${processedCount} records!`, 'success');
+        }
+
+    } catch (globalError) {
+        console.error('Global upload error:', globalError);
+        uiManager.showAlert('Critical error during upload', 'error');
     } finally {
-        uiManager.showLoading(false);
+        // Reset file input
         event.target.value = '';
+        uiManager.showLoading(false);
     }
 }
+
+
 
 async function saveDeliveryData(records) {
     await dataService.importCourierPerformance(records);

@@ -9,6 +9,8 @@ from backend.routers import (
     analytics_router,
     courier_performance_router,
     pickup_orders_router,
+    data_ingestion_router,
+    analytics_v2_router,
 )
 from backend.supabase_client import supabase
 
@@ -47,6 +49,8 @@ app.include_router(deliveries_router)
 app.include_router(analytics_router)
 app.include_router(courier_performance_router)
 app.include_router(pickup_orders_router)
+app.include_router(data_ingestion_router)
+app.include_router(analytics_v2_router)
 
 
 @app.get("/")

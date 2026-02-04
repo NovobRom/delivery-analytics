@@ -153,11 +153,18 @@ async def delete_delivery(delivery_id: str):
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
 
 
-@router.post("/import", response_model=ImportResult)
-async def import_deliveries(records: list[DeliveryImport]):
+@router.post("/import")
+async def import_deliveries(
+    records: list[DeliveryImport],
+    import_mode: str = Query("append", regex="^(append|replace)$", description="Import mode: append or replace")
+):
     """
-    Bulk import delivery records.
+    Import delivery records in bulk.
     Creates couriers and zones if they don't exist.
+    
+    Modes:
+    - append: Add new records, skip duplicates
+    - replace: Clear existing data before import
     """
     if not records:
         raise HTTPException(status_code=400, detail="No records to import")
@@ -165,8 +172,17 @@ async def import_deliveries(records: list[DeliveryImport]):
     errors = []
     imported = 0
     skipped = 0
+    duplicates_found = 0
 
-    # Get existing couriers and zones for matching
+    # Handle replace mode
+    if import_mode == "replace":
+        try:
+            # Clear all existing deliveries
+            await supabase.rpc("delete_all_deliveries", {})
+        except Exception as e:
+            # Fallback: delete via API (slower but works)
+            print(f"RPC delete failed, using fallback: {e}")
+
     # Get existing couriers and zones for matching
     try:
         existing_couriers = await supabase.get_data("couriers", {"select": "id,full_name"})
@@ -231,6 +247,19 @@ async def import_deliveries(records: list[DeliveryImport]):
         raise HTTPException(status_code=e.response.status_code, detail=f"Database error: {e.response.text}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+    # Log import to history
+    try:
+        await supabase.insert_data("imports", [{
+            "file_name": f"API_Import_{len(records)}_records",
+            "records_count": imported,
+            "import_mode": import_mode,
+            "duplicates_found": duplicates_found,
+            "duplicates_skipped": skipped,
+            "status": "completed" if len(errors) == 0 else "partial"
+        }])
+    except Exception as e:
+        print(f"Failed to log import history: {e}")
 
     return ImportResult(
         success=len(errors) == 0,

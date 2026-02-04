@@ -1,179 +1,143 @@
 // =============================================
-// Data Service v2.0
-// Supports: Direct Supabase + localStorage fallback
+// Data Service v2.1 (API-First)
+// Replaces direct Supabase connection with Backend API calls
 // =============================================
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config/supabase.js';
+import { API_ENDPOINTS } from '../utils/constants.js';
 
 class DataService {
+
     constructor() {
-        this.url = SUPABASE_URL;
-        this.key = SUPABASE_ANON_KEY;
-        this.headers = {
-            'apikey': this.key,
-            'Authorization': `Bearer ${this.key}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'return=representation'
-        };
-        this.mode = 'local';
+        this.mode = 'api';
     }
 
     /**
-     * Check connection to Supabase
+     * Check connection to Backend API
      */
     async checkConnection() {
-        if (!this.url || !this.key) {
-            console.log('📁 No Supabase config, using localStorage');
-            this.mode = 'local';
-            return 'local';
-        }
-
         try {
-            const response = await fetch(`${this.url}/rest/v1/`, {
-                method: 'HEAD',
-                headers: this.headers
-            });
-
-            if (response.ok || response.status === 404) {
-                this.mode = 'direct';
-                console.log('✅ Connected to Supabase');
-                return 'direct';
+            const response = await fetch('/api');
+            if (response.ok) {
+                console.log('✅ Connected to Delivery Analytics API');
+                return 'api';
             }
         } catch (e) {
-            console.log('⚠️ Supabase connection failed:', e.message);
+            console.warn('⚠️ API Connection failed:', e);
         }
-
-        this.mode = 'local';
-        console.log('📁 Using localStorage');
-        return 'local';
+        return 'offline';
     }
 
     // =========================================
-    // Direct Supabase methods
+    // Helpers
     // =========================================
 
-    async fetchDirect(table, query = '') {
-        if (!this.url) throw new Error('Supabase not configured');
-        const response = await fetch(`${this.url}/rest/v1/${table}${query}`, {
-            headers: this.headers
-        });
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Fetch failed: ${response.status} - ${error}`);
-        }
-        return response.json();
-    }
-
-    async insertDirect(table, data) {
-        if (!this.url) throw new Error('Supabase not configured');
-        const response = await fetch(`${this.url}/rest/v1/${table}`, {
-            method: 'POST',
-            headers: this.headers,
-            body: JSON.stringify(data)
-        });
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Insert failed: ${response.status} - ${error}`);
-        }
-        return response.json();
-    }
-
-    // =========================================
-    // Courier Performance (Delivery data)
-    // =========================================
-
-    async getCourierPerformance(filters = {}) {
-        if (this.mode !== 'direct') return [];
-
+    async _get(endpoint, params = {}) {
         try {
-            let query = '?order=report_date.desc&limit=1000';
-            if (filters.startDate) query += `&report_date=gte.${filters.startDate}`;
-            if (filters.endDate) query += `&report_date=lte.${filters.endDate}`;
-            return await this.fetchDirect('courier_performance', query);
-        } catch (e) {
-            console.error('getCourierPerformance error:', e);
+            const url = new URL(endpoint, window.location.origin);
+            Object.keys(params).forEach(key => {
+                if (params[key]) url.searchParams.append(key, params[key]);
+            });
+
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+            return await response.json();
+        } catch (error) {
+            console.error(`GET ${endpoint} failed:`, error);
             return [];
         }
     }
 
-    async importCourierPerformance(records) {
-        if (this.mode !== 'direct') {
-            return { imported: 0, failed: records.length, errors: ['No database connection'] };
-        }
+    // =========================================
+    // Courier Performance (Delivery Pipeline)
+    // =========================================
 
-        try {
-            const result = await this.insertDirect('courier_performance', records);
-            return { imported: result.length || records.length, failed: 0, errors: [] };
-        } catch (e) {
-            console.error('Import error:', e);
-            return { imported: 0, failed: records.length, errors: [e.message] };
-        }
+    /**
+     * Get Courier Performance Stats
+     * Maps V2 API fields to Legacy UI fields for compatibility
+     */
+    async getCourierPerformance(filters = {}) {
+        // We fetch the aggregated stats view
+        const data = await this._get(API_ENDPOINTS.STATS_DELIVERY_COURIERS, filters);
+
+        // Map to legacy format expected by UI (charts/tables)
+        return data.map(item => ({
+            courier_name: item.courier_name,
+            full_name: item.courier_name, // Alias
+            report_date: item.report_date, // Critical for date filtering
+
+            // Map metrics
+            loaded_count: item.total_assigned || 0,
+            delivered_count: item.delivered || 0,
+            returned_count: item.returned || 0,
+            success_rate: item.success_rate || 0,
+
+            // Extra V2 data
+            documented_failures: item.documented_failures || 0
+        }));
+    }
+
+    /**
+     * Import is now handled via excelParser.uploadToBackend
+     * keeping empty method for compatibility if app.js calls it
+     */
+    async importCourierPerformance(records) {
+        console.warn('Deprecated: Use uploadToBackend instead');
+        return { imported: 0, failed: 0, errors: ['Use new upload method'] };
     }
 
     // =========================================
-    // Pickup Orders
+    // Pickup Orders (Shipment Pipeline)
     // =========================================
 
     async getPickupOrders(filters = {}) {
-        if (this.mode !== 'direct') return [];
+        const data = await this._get(API_ENDPOINTS.STATS_PICKUP, filters);
 
-        try {
-            let query = '?order=execution_date.desc&limit=1000';
-            if (filters.startDate) query += `&execution_date=gte.${filters.startDate}`;
-            if (filters.endDate) query += `&execution_date=lte.${filters.endDate}`;
-            return await this.fetchDirect('pickup_orders', query);
-        } catch (e) {
-            console.error('getPickupOrders error:', e);
-            return [];
-        }
+        // Map V2 shipment stats to UI format
+        return data.map(item => ({
+            execution_date: item.pickup_execution_date,
+            report_date: item.pickup_execution_date, // Alias for charts
+
+            sender_country: item.sender_country,
+
+            // Metrics
+            shipments_count: item.total_shipments,
+            total_weight: item.total_weight,
+            total_cost: item.total_cost
+        }));
     }
 
     async importPickupOrders(records) {
-        if (this.mode !== 'direct') {
-            return { imported: 0, failed: records.length, errors: ['No database connection'] };
-        }
-
-        try {
-            const result = await this.insertDirect('pickup_orders', records);
-            return { imported: result.length || records.length, failed: 0, errors: [] };
-        } catch (e) {
-            console.error('Import error:', e);
-            return { imported: 0, failed: records.length, errors: [e.message] };
-        }
+        console.warn('Deprecated: Use uploadToBackend instead');
+        return { imported: 0, failed: 0, errors: ['Use new upload method'] };
     }
 
     // =========================================
-    // Clear Data
+    // Daily Stats Summary
     // =========================================
 
-    async clearAllDeliveries() {
-        if (this.mode !== 'direct') return false;
+    async getDailyStats(filters = {}) {
+        const data = await this._get(API_ENDPOINTS.STATS_DELIVERY, filters);
 
-        try {
-            const response = await fetch(`${this.url}/rest/v1/courier_performance?id=neq.00000000-0000-0000-0000-000000000000`, {
-                method: 'DELETE',
-                headers: this.headers
-            });
-            return response.ok;
-        } catch (e) {
-            console.error('Clear error:', e);
-            return false;
-        }
+        return data.map(item => ({
+            delivery_date: item.date,
+            report_date: item.date,
+
+            active_couriers: item.active_couriers,
+
+            loaded_count: item.total_deliveries, // Attempts
+            delivered_count: item.delivered_count,
+            success_rate: item.success_rate
+        }));
     }
 
-    async clearAllPickups() {
-        if (this.mode !== 'direct') return false;
+    // =========================================
+    // Management
+    // =========================================
 
-        try {
-            const response = await fetch(`${this.url}/rest/v1/pickup_orders?id=neq.00000000-0000-0000-0000-000000000000`, {
-                method: 'DELETE',
-                headers: this.headers
-            });
-            return response.ok;
-        } catch (e) {
-            console.error('Clear error:', e);
-            return false;
-        }
+    // Clear methods would require new ADMIN endpoints
+    async clearAllData() {
+        console.warn('Clear data not implemented in V2 yet');
+        return false;
     }
 }
 

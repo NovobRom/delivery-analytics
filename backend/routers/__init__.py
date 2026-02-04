@@ -4,6 +4,8 @@ from .deliveries import router as deliveries_router
 from .analytics import router as analytics_router
 from .courier_performance import router as courier_performance_router
 from .pickup_orders import router as pickup_orders_router
+from .data_ingestion import router as data_ingestion_router
+from .analytics_v2 import router as analytics_v2_router
 
 __all__ = [
     "couriers_router",
@@ -12,4 +14,6 @@ __all__ = [
     "analytics_router",
     "courier_performance_router",
     "pickup_orders_router",
+    "data_ingestion_router",
+    "analytics_v2_router",
 ]
