@@ -85,13 +85,20 @@ async function checkConnection() {
 
     try {
         const connectionType = await dataService.checkConnection();
-        store.setConnection(connectionType, connectionType !== 'local');
+        // Force API mode
+        store.setConnection(connectionType, true);
         uiManager.updateConnectionStatus(connectionType);
         console.log('Connection type:', connectionType);
+
+        if (connectionType === 'local') {
+            console.warn('Supabase not reachable, check env vars');
+            helpers.showToast('Database connection failed', 'error');
+        }
     } catch (error) {
         console.error('Connection check failed:', error);
-        store.setConnection('local', false);
-        uiManager.updateConnectionStatus('local');
+        store.setConnection('api', false);
+        uiManager.updateConnectionStatus('error');
+        helpers.showToast('Backend connection failed', 'error');
     }
 
     uiManager.showLoading(false);
@@ -131,51 +138,32 @@ async function loadData() {
 }
 
 async function loadDeliveryData() {
-    if (store.useSupabase) {
-        try {
-            const data = await dataService.getCourierPerformance();
-            store.deliveryData.all = data;
-            if (data.length > 0) {
-                helpers.showToast(`Loaded ${data.length} delivery records`, 'success');
-            }
-        } catch (e) {
-            console.error('Failed to load from Supabase:', e);
+    try {
+        const data = await dataService.getCourierPerformance();
+        store.deliveryData.all = data;
+        if (data.length > 0) {
+            helpers.showToast(`Loaded ${data.length} delivery records`, 'success');
+        } else {
+            helpers.showToast('No delivery records found', 'info');
         }
-    } else {
-        // Load from localStorage
-        const stored = helpers.loadFromStorage('deliveryDataV4');
-        if (stored && stored.length > 0) {
-            store.deliveryData.all = stored.map(row => ({
-                ...row,
-                report_date: row._dateStr || row.report_date,
-                courier_name: row["ПІБ кур'єра"] || row.courier_name,
-                car_number: row['Номер авто'] || row.car_number,
-                department: row['Підрозділ відомості'] || row.department,
-                loaded_parcels: row._loaded || row.loaded_parcels || 0,
-                delivered_parcels: row._delivered || row.delivered_parcels || 0
-            }));
-            helpers.showToast(`Loaded ${stored.length} records from local storage`, 'info');
-        }
+    } catch (e) {
+        console.error('Failed to load from Supabase:', e);
+        helpers.showToast('Failed to load delivery data', 'error');
     }
 }
 
 async function loadPickupData() {
-    if (store.useSupabase) {
-        try {
-            const data = await dataService.getPickupOrders();
-            store.pickupData.all = data;
-            if (data.length > 0) {
-                helpers.showToast(`Loaded ${data.length} pickup orders`, 'success');
-            }
-        } catch (e) {
-            console.error('Failed to load from Supabase:', e);
+    try {
+        const data = await dataService.getPickupOrders();
+        store.pickupData.all = data;
+        if (data.length > 0) {
+            helpers.showToast(`Loaded ${data.length} pickup orders`, 'success');
+        } else {
+            helpers.showToast('No pickup orders found', 'info');
         }
-    } else {
-        const stored = helpers.loadFromStorage('pickupDataV1');
-        if (stored && stored.length > 0) {
-            store.pickupData.all = stored;
-            helpers.showToast(`Loaded ${stored.length} pickup orders from local storage`, 'info');
-        }
+    } catch (e) {
+        console.error('Failed to load from Supabase:', e);
+        helpers.showToast('Failed to load pickup data', 'error');
     }
 }
 
@@ -267,21 +255,11 @@ async function handleFileUpload(event) {
 }
 
 async function saveDeliveryData(records) {
-    if (store.useSupabase) {
-        await dataService.importCourierPerformance(records);
-    } else {
-        store.deliveryData.all = [...store.deliveryData.all, ...records];
-        helpers.saveToStorage('deliveryDataV4', store.deliveryData.all);
-    }
+    await dataService.importCourierPerformance(records);
 }
 
 async function savePickupData(records) {
-    if (store.useSupabase) {
-        await dataService.importPickupOrders(records);
-    } else {
-        store.pickupData.all = [...store.pickupData.all, ...records];
-        helpers.saveToStorage('pickupDataV1', store.pickupData.all);
-    }
+    await dataService.importPickupOrders(records);
 }
 
 // =============================================
@@ -587,18 +565,12 @@ async function clearAllData() {
     }
 
     try {
-        if (store.useSupabase) {
-            if (store.isDeliveryMode()) {
-                await dataService.clearAllDeliveries();
-            } else {
-                await dataService.clearAllPickups();
-            }
-            helpers.showToast('Database cleared', 'success');
+        if (store.isDeliveryMode()) {
+            await dataService.clearAllDeliveries();
         } else {
-            const key = store.isDeliveryMode() ? 'deliveryDataV4' : 'pickupDataV1';
-            localStorage.removeItem(key);
-            helpers.showToast('Local data cleared', 'success');
+            await dataService.clearAllPickups();
         }
+        helpers.showToast('Database cleared', 'success');
 
         // Reset state
         if (store.isDeliveryMode()) {

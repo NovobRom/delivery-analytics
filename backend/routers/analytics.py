@@ -146,64 +146,27 @@ async def get_courier_stats(
         start_date, end_date = get_default_date_range()
 
     try:
-        # Get deliveries for the period
-        params = {
-            "select": "courier_id, loaded_count, delivered_count, delivery_date",
-            "and": f"(delivery_date.gte.{start_date.isoformat()},delivery_date.lte.{end_date.isoformat()})",
-        }
-        deliveries = await supabase.get_data("deliveries", params)
+        # Use server-side aggregation for performance
+        result = await supabase.rpc("get_courier_stats_period", {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "min_deliveries": min_deliveries
+        })
 
-        # Get all couriers
-        couriers = await supabase.get_data("couriers", {"select": "*"})
-        courier_map = {c["id"]: c for c in couriers}
-
-        # Aggregate by courier
-        stats = {}
-        for d in deliveries:
-            cid = d["courier_id"]
-            if cid not in stats:
-                stats[cid] = {
-                    "total_deliveries": 0,
-                    "total_loaded": 0,
-                    "total_delivered": 0,
-                    "first_delivery": d["delivery_date"],
-                    "last_delivery": d["delivery_date"],
-                }
-            stats[cid]["total_deliveries"] += 1
-            stats[cid]["total_loaded"] += d["loaded_count"]
-            stats[cid]["total_delivered"] += d["delivered_count"]
-            if d["delivery_date"] < stats[cid]["first_delivery"]:
-                stats[cid]["first_delivery"] = d["delivery_date"]
-            if d["delivery_date"] > stats[cid]["last_delivery"]:
-                stats[cid]["last_delivery"] = d["delivery_date"]
-
-        # Build response
-        result = []
-        for cid, s in stats.items():
-            if s["total_deliveries"] < min_deliveries:
-                continue
-            if cid not in courier_map:
-                continue
-
-            courier = courier_map[cid]
-            loaded = s["total_loaded"]
-            success_rate = (s["total_delivered"] / loaded * 100) if loaded > 0 else 0
-
-            result.append(CourierStats(
-                id=cid,
-                full_name=courier["full_name"],
-                vehicle_number=courier.get("vehicle_number"),
-                total_deliveries=s["total_deliveries"],
-                total_loaded=loaded,
-                total_delivered=s["total_delivered"],
-                success_rate=round(success_rate, 2),
-                first_delivery=s["first_delivery"],
-                last_delivery=s["last_delivery"],
-            ))
-
-        # Sort by success rate descending
-        result.sort(key=lambda x: x.success_rate, reverse=True)
-        return result
+        return [
+            CourierStats(
+                id=r["id"],
+                full_name=r["full_name"],
+                vehicle_number=r.get("vehicle_number"),
+                total_deliveries=r["total_deliveries"],
+                total_loaded=r["total_loaded"],
+                total_delivered=r["total_delivered"],
+                success_rate=r["success_rate"],
+                first_delivery=r["first_delivery"],
+                last_delivery=r["last_delivery"],
+            )
+            for r in result
+        ]
     except HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
 
@@ -218,53 +181,23 @@ async def get_zone_stats(
         start_date, end_date = get_default_date_range()
 
     try:
-        # Get deliveries for the period
-        params = {
-            "select": "zone_id, loaded_count, delivered_count",
-            "and": f"(delivery_date.gte.{start_date.isoformat()},delivery_date.lte.{end_date.isoformat()})",
-        }
-        deliveries = await supabase.get_data("deliveries", params)
+        # Use server-side aggregation
+        result = await supabase.rpc("get_zone_stats_period", {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        })
 
-        # Get all zones
-        zones = await supabase.get_data("zones", {"select": "*"})
-        zone_map = {z["id"]: z for z in zones}
-
-        # Aggregate by zone
-        stats = {}
-        for d in deliveries:
-            zid = d["zone_id"]
-            if zid not in stats:
-                stats[zid] = {
-                    "total_deliveries": 0,
-                    "total_loaded": 0,
-                    "total_delivered": 0,
-                }
-            stats[zid]["total_deliveries"] += 1
-            stats[zid]["total_loaded"] += d["loaded_count"]
-            stats[zid]["total_delivered"] += d["delivered_count"]
-
-        # Build response
-        result = []
-        for zid, s in stats.items():
-            if zid not in zone_map:
-                continue
-
-            zone = zone_map[zid]
-            loaded = s["total_loaded"]
-            success_rate = (s["total_delivered"] / loaded * 100) if loaded > 0 else 0
-
-            result.append(ZoneStats(
-                id=zid,
-                name=zone["name"],
-                total_deliveries=s["total_deliveries"],
-                total_loaded=loaded,
-                total_delivered=s["total_delivered"],
-                success_rate=round(success_rate, 2),
-            ))
-
-        # Sort by total loaded descending
-        result.sort(key=lambda x: x.total_loaded, reverse=True)
-        return result
+        return [
+            ZoneStats(
+                id=r["id"],
+                name=r["name"],
+                total_deliveries=r["total_deliveries"],
+                total_loaded=r["total_loaded"],
+                total_delivered=r["total_delivered"],
+                success_rate=r["success_rate"],
+            )
+            for r in result
+        ]
     except HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
 

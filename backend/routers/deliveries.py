@@ -167,54 +167,70 @@ async def import_deliveries(records: list[DeliveryImport]):
     skipped = 0
 
     # Get existing couriers and zones for matching
+    # Get existing couriers and zones for matching
     try:
         existing_couriers = await supabase.get_data("couriers", {"select": "id,full_name"})
         existing_zones = await supabase.get_data("zones", {"select": "id,name"})
+
+        courier_map = {c["full_name"].lower(): c["id"] for c in existing_couriers}
+        zone_map = {z["name"].lower(): z["id"] for z in existing_zones}
+
+        # 1. Identify missing entities
+        new_couriers_dict = {}
+        new_zones_set = set()
+
+        for record in records:
+            c_key = record.courier_name.strip().lower()
+            if c_key not in courier_map:
+                new_couriers_dict[c_key] = {
+                    "full_name": record.courier_name.strip(),
+                    "vehicle_number": record.vehicle_number
+                }
+
+            z_key = record.zone_name.strip().lower()
+            if z_key not in zone_map:
+                new_zones_set.add(record.zone_name.strip())
+
+        # 2. Bulk insert new entities
+        if new_couriers_dict:
+            created_couriers = await supabase.insert_data("couriers", list(new_couriers_dict.values()))
+            for c in created_couriers:
+                courier_map[c["full_name"].lower()] = c["id"]
+
+        if new_zones_set:
+            created_zones = await supabase.insert_data("zones", [{"name": z} for z in new_zones_set])
+            for z in created_zones:
+                zone_map[z["name"].lower()] = z["id"]
+
+        # 3. Prepare delivery records
+        deliveries_to_upsert = []
+        for i, record in enumerate(records):
+            c_id = courier_map.get(record.courier_name.strip().lower())
+            z_id = zone_map.get(record.zone_name.strip().lower())
+
+            if c_id and z_id:
+                deliveries_to_upsert.append({
+                    "delivery_date": record.delivery_date.isoformat(),
+                    "courier_id": c_id,
+                    "zone_id": z_id,
+                    "loaded_count": record.loaded_count,
+                    "delivered_count": record.delivered_count,
+                })
+            else:
+                skipped += 1
+                errors.append(f"Row {i + 1}: Failed to map courier or zone")
+
+        # 4. Batch upsert deliveries
+        BATCH_SIZE = 1000
+        for i in range(0, len(deliveries_to_upsert), BATCH_SIZE):
+            batch = deliveries_to_upsert[i : i + BATCH_SIZE]
+            await supabase.upsert_data("deliveries", batch)
+            imported += len(batch)
+
     except HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
-
-    courier_map = {c["full_name"].lower(): c["id"] for c in existing_couriers}
-    zone_map = {z["name"].lower(): z["id"] for z in existing_zones}
-
-    for i, record in enumerate(records):
-        try:
-            # Find or create courier
-            courier_key = record.courier_name.lower()
-            if courier_key not in courier_map:
-                new_courier = await supabase.insert_data("couriers", {
-                    "full_name": record.courier_name,
-                    "vehicle_number": record.vehicle_number,
-                })
-                courier_map[courier_key] = new_courier[0]["id"]
-
-            # Find or create zone
-            zone_key = record.zone_name.lower()
-            if zone_key not in zone_map:
-                new_zone = await supabase.insert_data("zones", {
-                    "name": record.zone_name,
-                })
-                zone_map[zone_key] = new_zone[0]["id"]
-
-            # Upsert delivery
-            delivery_data = {
-                "delivery_date": record.delivery_date.isoformat(),
-                "courier_id": courier_map[courier_key],
-                "zone_id": zone_map[zone_key],
-                "loaded_count": record.loaded_count,
-                "delivered_count": record.delivered_count,
-            }
-
-            await supabase.upsert_data("deliveries", delivery_data)
-            imported += 1
-
-        except HTTPStatusError as e:
-            error_msg = f"Row {i + 1}: {e.response.text}"
-            errors.append(error_msg)
-            skipped += 1
-        except Exception as e:
-            error_msg = f"Row {i + 1}: {str(e)}"
-            errors.append(error_msg)
-            skipped += 1
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
     return ImportResult(
         success=len(errors) == 0,

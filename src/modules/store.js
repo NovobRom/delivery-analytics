@@ -51,7 +51,7 @@ class Store {
 
         // Connection
         this.connection = {
-            type: 'local', // 'api', 'direct', 'local'
+            type: 'api', // Default to API
             isConnected: false
         };
 
@@ -319,34 +319,7 @@ class Store {
     // Persistence
     // ==========================================
 
-    saveToLocalStorage() {
-        try {
-            const data = {
-                deliveryData: this.deliveryData.all,
-                pickupData: this.pickupData.all,
-                activeDataType: this.activeDataType
-            };
-            localStorage.setItem('deliveryAnalyticsStore', JSON.stringify(data));
-        } catch (e) {
-            console.error('Failed to save to localStorage:', e);
-        }
-    }
-
-    loadFromLocalStorage() {
-        try {
-            const stored = localStorage.getItem('deliveryAnalyticsStore');
-            if (stored) {
-                const data = JSON.parse(stored);
-                this.deliveryData.all = data.deliveryData || [];
-                this.pickupData.all = data.pickupData || [];
-                this.activeDataType = data.activeDataType || FILE_TYPES.DELIVERY;
-                return true;
-            }
-        } catch (e) {
-            console.error('Failed to load from localStorage:', e);
-        }
-        return false;
-    }
+    // localStorage support removed in favor of Supabase API
 
     // ==========================================
     // Legacy Compatibility

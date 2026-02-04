@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from contextlib import asynccontextmanager
 from backend.routers import (
     couriers_router,
     zones_router,
@@ -9,12 +10,25 @@ from backend.routers import (
     courier_performance_router,
     pickup_orders_router,
 )
+from backend.supabase_client import supabase
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for the application."""
+    # Startup: Initialize resources
+    await supabase.connect()
+    yield
+    # Shutdown: Clean up resources
+    await supabase.close()
+
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Delivery Analytics API",
     description="Backend API for delivery analytics dashboard with courier performance and pickup orders",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS
