@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: delivery-analytics-api
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        value: https://dvmartxnjpemygpqfdbq.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    healthCheckPath: /

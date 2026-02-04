@@ -56,7 +56,6 @@ class SupabaseClient:
             table: Table name
             query_params: PostgREST query parameters (select, order, limit, etc.)
         """
-        """
         client = await self._get_client()
         response = await client.get(
             table,
@@ -66,7 +65,6 @@ class SupabaseClient:
         return response.json()
 
     async def get_by_id(self, table: str, id: str) -> Optional[dict]:
-        """Fetch a single record by ID."""
         """Fetch a single record by ID."""
         client = await self._get_client()
         response = await client.get(
@@ -84,7 +82,6 @@ class SupabaseClient:
         Args:
             table: Table name
             data: Single dict or list of dicts to insert
-        """
         """
         client = await self._get_client()
         response = await client.post(
@@ -108,7 +105,6 @@ class SupabaseClient:
             id: Record UUID
             data: Fields to update
         """
-        """
         client = await self._get_client()
         response = await client.patch(
             table,
@@ -124,7 +120,6 @@ class SupabaseClient:
         Delete a record by ID.
 
         Returns True if deletion was successful.
-        """
         """
         client = await self._get_client()
         response = await client.delete(
@@ -142,7 +137,6 @@ class SupabaseClient:
             table: Table name
             filters: PostgREST filter params (e.g., {"zone_id": "eq.xxx"})
         """
-        """
         client = await self._get_client()
         response = await client.delete(
             table,
@@ -155,7 +149,6 @@ class SupabaseClient:
         """
         Insert or update records (upsert).
         Uses ON CONFLICT to update existing records.
-        """
         """
         client = await self._get_client()
         # Merge default headers with specific Upsert preferences
@@ -182,7 +175,6 @@ class SupabaseClient:
             function_name: Name of the stored function
             params: Function parameters
         """
-        """
         client = await self._get_client()
         response = await client.post(
             f"rpc/{function_name}",
@@ -193,7 +185,6 @@ class SupabaseClient:
 
     async def get_count(self, table: str, filters: Optional[dict] = None) -> int:
         """Get count of records in a table with optional filters."""
-        """
         client = await self._get_client()
         # Override Prefer header for count
         headers = {"Prefer": "count=exact"}
@@ -206,12 +197,12 @@ class SupabaseClient:
             params=params
         )
         response.raise_for_status()
-            content_range = response.headers.get("content-range", "")
-            # Format: "0-9/100" or "*/0"
-            if "/" in content_range:
-                total = content_range.split("/")[1]
-                return int(total) if total != "*" else 0
-            return 0
+        content_range = response.headers.get("content-range", "")
+        # Format: "0-9/100" or "*/0"
+        if "/" in content_range:
+            total = content_range.split("/")[1]
+            return int(total) if total != "*" else 0
+        return 0
 
 
 # Singleton instance
